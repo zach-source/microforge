@@ -1,0 +1,51 @@
+package subcmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/example/microforge/internal/hooks"
+	"github.com/example/microforge/internal/store"
+)
+
+func Hook(home string, args []string) error {
+	if len(args) < 1 { return fmt.Errorf("usage: mf hook <stop|guardrails> ...") }
+	op := args[0]
+	rest := args[1:]
+
+	inBytes, _ := io.ReadAll(os.Stdin)
+	var in hooks.ClaudeHookInput
+	if len(inBytes) > 0 { _ = json.Unmarshal(inBytes, &in) }
+	cwd := strings.TrimSpace(in.Cwd)
+	if cwd == "" {
+		wd, _ := os.Getwd()
+		cwd = wd
+	}
+
+	switch op {
+	case "stop":
+		_ = rest // role is selected by agent wake/spawn via active-agent.json
+		identity, err := hooks.LoadIdentityFromCWD(cwd)
+		if err != nil { return err }
+		db, err := store.OpenDB(identity.DBPath)
+		if err != nil { return err }
+		defer db.Close()
+		resp, err := hooks.StopHook(context.Background(), db, identity)
+		if err != nil { return err }
+		return json.NewEncoder(os.Stdout).Encode(resp)
+
+	case "guardrails":
+		identity, err := hooks.LoadIdentityFromCWD(cwd)
+		if err != nil { return err }
+		dec, err := hooks.GuardrailsHook(in, identity)
+		if err != nil { return err }
+		return json.NewEncoder(os.Stdout).Encode(dec)
+
+	default:
+		return fmt.Errorf("unknown hook subcommand: %s", op)
+	}
+}
