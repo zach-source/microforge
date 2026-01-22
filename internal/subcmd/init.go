@@ -11,7 +11,7 @@ import (
 
 func Init(home string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: mf init <rig> --repo <path>")
+		return fmt.Errorf("usage: mforge init <rig> --repo <path>")
 	}
 	rigName := args[0]
 	repo := ""

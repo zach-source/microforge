@@ -13,7 +13,7 @@ import (
 )
 
 func Hook(home string, args []string) error {
-	if len(args) < 1 { return fmt.Errorf("usage: mf hook <stop|guardrails> ...") }
+	if len(args) < 1 { return fmt.Errorf("usage: mforge hook <stop|guardrails> ...") }
 	op := args[0]
 	rest := args[1:]
 

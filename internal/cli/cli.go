@@ -6,34 +6,53 @@ import (
 	"os"
 	"strings"
 
-	"github.com/example/microforge/internal/subcmd"
 	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/subcmd"
 )
 
 func usage() string {
 	return strings.TrimSpace(`
-mf — Microforge (SQLite + tmux + Claude Code hooks)
+mforge — Microforge (SQLite + tmux + Claude Code hooks)
 
 Usage:
-  mf init <rig> --repo <path>
+  mforge init <rig> --repo <path>
 
-  mf cell add <rig> <cell> --scope <path-prefix>
-  mf cell bootstrap <rig> <cell>
+  mforge cell add <rig> <cell> --scope <path-prefix>
+  mforge cell bootstrap <rig> <cell> [--architect]
 
-  mf agent spawn <rig> <cell> <role>
-  mf agent stop  <rig> <cell> <role>
-  mf agent attach <rig> <cell> <role>
-  mf agent wake <rig> <cell> <role>
+  mforge agent spawn <rig> <cell> <role>
+  mforge agent stop  <rig> <cell> <role>
+  mforge agent attach <rig> <cell> <role>
+  mforge agent wake <rig> <cell> <role>
+  mforge agent status <rig> [--cell <cell>] [--role <role>] [--remote]
 
-  mf task create <rig> --title <t> [--body <md>] [--scope <path-prefix>] [--kind improve|fix|review|monitor|doc]
-  mf task list <rig>
+  mforge task create <rig> --title <t> [--body <md>] [--scope <path-prefix>] [--kind improve|fix|review|monitor|doc]
+  mforge task list <rig>
 
-  mf assign <rig> --task <id> --cell <cell> --role builder|monitor|reviewer|architect
-  mf manager tick <rig> [--watch]
+  mforge assign <rig> --task <id> --cell <cell> --role builder|monitor|reviewer|architect [--promise <token>]
+  mforge request create <rig> --cell <cell> --role <role> --severity <sev> --priority <p> --scope <path> --payload <json>
+  mforge request list <rig> [--cell <cell>] [--status <status>] [--priority <p>]
+  mforge request triage <rig> --request <id> --action create-task|merge|block
+  mforge monitor run-tests <rig> <cell> --cmd <command...> [--severity <sev>] [--priority <p>] [--scope <path>]
+  mforge epic create <rig> --title <t> [--body <md>]
+  mforge epic add-task <rig> --epic <id> --task <id>
+  mforge epic assign <rig> --epic <id> [--role <role>]
+  mforge epic status <rig> --epic <id>
+  mforge epic close <rig> --epic <id>
+  mforge epic conflict <rig> --epic <id> --cell <cell> --details <text>
+  mforge task split <rig> --task <id> --cells <a,b,c>
+  mforge manager tick <rig> [--watch]
+  mforge architect docs <rig> --cell <cell> --details <text> [--scope <path>]
+  mforge architect contract <rig> --cell <cell> --details <text> [--scope <path>]
+  mforge architect design <rig> --cell <cell> --details <text> [--scope <path>]
+  mforge report <rig> [--cell <cell>]
+  mforge library start <rig> [--addr <addr>]
+  mforge library query <rig> --q <query> [--service <name>] [--addr <addr>]
+  mforge ssh <rig> --cmd <command...> [--tty]
 
   # Invoked by Claude Code hooks:
-  mf hook stop [--role <role>]
-  mf hook guardrails
+  mforge hook stop [--role <role>]
+  mforge hook guardrails
 
 Environment:
   MF_HOME   override default home (~/.microforge)
@@ -65,6 +84,20 @@ func Run(args []string) error {
 		return subcmd.Agent(home, rest)
 	case "task":
 		return subcmd.Task(home, rest)
+	case "request":
+		return subcmd.Request(home, rest)
+	case "monitor":
+		return subcmd.Monitor(home, rest)
+	case "epic":
+		return subcmd.Epic(home, rest)
+	case "architect":
+		return subcmd.Architect(home, rest)
+	case "report":
+		return subcmd.Report(home, rest)
+	case "library":
+		return subcmd.Library(home, rest)
+	case "ssh":
+		return subcmd.SSH(home, rest)
 	case "assign":
 		return subcmd.Assign(home, rest)
 	case "manager":

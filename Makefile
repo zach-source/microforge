@@ -1,5 +1,5 @@
 build:
-	go build ./cmd/mf
+	go build ./cmd/mforge
 
 test:
 	go test ./...
