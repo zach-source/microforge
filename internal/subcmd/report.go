@@ -2,9 +2,11 @@ package subcmd
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
-	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/beads"
+	"github.com/example/microforge/internal/rig"
 )
 
 func Report(home string, args []string) error {
@@ -22,57 +24,59 @@ func Report(home string, args []string) error {
 			}
 		}
 	}
-	db, err := store.OpenDB(store.DBPath(home, rigName))
+	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	rigRow, err := store.GetRigByName(db, rigName)
+	client := beads.Client{RepoPath: cfg.RepoPath}
+	issues, err := client.List(nil)
 	if err != nil {
 		return err
 	}
 
-	var cellID *string
-	scopePrefix := ""
-	if strings.TrimSpace(cellName) != "" {
-		cellRow, err := store.GetCell(db, rigRow.ID, cellName)
-		if err != nil {
-			return err
+	reqCounts := map[string]int{}
+	taskCounts := map[string]int{}
+	oldReq := ""
+	oldTask := ""
+	for _, issue := range issues {
+		meta := beads.ParseMeta(issue.Description)
+		if strings.TrimSpace(cellName) != "" && meta.Cell != cellName {
+			continue
 		}
-		cellID = &cellRow.ID
-		scopePrefix = cellRow.ScopePrefix
-	}
-
-	reqCounts, err := store.CountRequestsByStatus(db, rigRow.ID, cellID)
-	if err != nil {
-		return err
-	}
-	taskCounts, err := store.CountTasksByStatus(db, rigRow.ID, scopePrefix)
-	if err != nil {
-		return err
-	}
-	oldReq, err := store.OldestRequestCreatedAt(db, rigRow.ID, cellID)
-	if err != nil {
-		return err
-	}
-	oldTask, err := store.OldestTaskCreatedAt(db, rigRow.ID, scopePrefix)
-	if err != nil {
-		return err
+		switch strings.ToLower(issue.Type) {
+		case "request", "observation":
+			reqCounts[issue.Status]++
+			if issue.CreatedAt != "" && (oldReq == "" || issue.CreatedAt < oldReq) {
+				oldReq = issue.CreatedAt
+			}
+		case "task", "assignment":
+			taskCounts[issue.Status]++
+			if issue.CreatedAt != "" && (oldTask == "" || issue.CreatedAt < oldTask) {
+				oldTask = issue.CreatedAt
+			}
+		}
 	}
 
 	fmt.Println("Requests")
-	for status, count := range reqCounts {
-		fmt.Printf("%s\t%d\n", status, count)
-	}
-	if oldReq.Valid {
-		fmt.Printf("oldest_request\t%s\n", oldReq.String)
+	printCounts(reqCounts)
+	if oldReq != "" {
+		fmt.Printf("oldest_request\t%s\n", oldReq)
 	}
 	fmt.Println("Tasks")
-	for status, count := range taskCounts {
-		fmt.Printf("%s\t%d\n", status, count)
-	}
-	if oldTask.Valid {
-		fmt.Printf("oldest_task\t%s\n", oldTask.String)
+	printCounts(taskCounts)
+	if oldTask != "" {
+		fmt.Printf("oldest_task\t%s\n", oldTask)
 	}
 	return nil
+}
+
+func printCounts(counts map[string]int) {
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Printf("%s\t%d\n", k, counts[k])
+	}
 }

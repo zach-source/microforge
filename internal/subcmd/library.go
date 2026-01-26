@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/example/microforge/internal/library"
-	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/rig"
 )
 
 func Library(home string, args []string) error {
@@ -34,7 +34,7 @@ func Library(home string, args []string) error {
 				}
 			}
 		}
-		cfg, err := store.LoadRigConfig(store.RigConfigPath(home, rigName))
+		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
 			return err
 		}
@@ -88,7 +88,7 @@ func Library(home string, args []string) error {
 		if strings.TrimSpace(query) == "" {
 			return fmt.Errorf("--q is required")
 		}
-		cfg, err := store.LoadRigConfig(store.RigConfigPath(home, rigName))
+		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
 			return err
 		}

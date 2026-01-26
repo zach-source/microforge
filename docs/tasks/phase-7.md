@@ -2,13 +2,13 @@
 
 Goal: Make the system trustworthy on real monorepos.
 
-## SQLite Correctness
-- [x] Improve claim/lock semantics to avoid double-claim.
-- [x] Add migrations framework with versioned migrations.
+## Beads Consistency
+- [x] Ensure assignment selection respects dependencies and status transitions.
+- [x] Define turn tagging conventions for Beads issues.
 
 ## Tests
-- [x] DB unit tests for claims, requests, and task graph rollups.
-- [x] Integration test: simulated worktree + outbox → manager reconciliation.
+- [x] Beads client tests for list/show/create/ready parsing.
+- [x] Integration test: simulated worktree + outbox → manager reconciliation via Beads.
 
 ## CI + Lint
 - [x] Add CI gate for `go test ./...`.

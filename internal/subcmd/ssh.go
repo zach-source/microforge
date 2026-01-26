@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/rig"
 	"github.com/example/microforge/internal/util"
 )
 
@@ -29,7 +29,7 @@ func SSH(home string, args []string) error {
 	if len(cmdParts) == 0 {
 		return fmt.Errorf("--cmd is required")
 	}
-	cfg, err := store.LoadRigConfig(store.RigConfigPath(home, rigName))
+	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ func SSH(home string, args []string) error {
 	return err
 }
 
-func buildSSHCommand(cfg store.RigConfig, remoteCmd []string, tty bool) (string, []string) {
+func buildSSHCommand(cfg rig.RigConfig, remoteCmd []string, tty bool) (string, []string) {
 	dest := cfg.RemoteHost
 	if strings.TrimSpace(cfg.RemoteUser) != "" {
 		dest = cfg.RemoteUser + "@" + dest

@@ -4,7 +4,7 @@ Goal: Make the current skeleton compile cleanly, run cleanly, and be safe to ite
 
 ## Repo Baseline
 - [x] Verify repo path at `~/repos/workspaces/microforge` and build succeeds: `go build ./cmd/mforge`.
-- [x] Add a DB smoke test that opens a DB, migrates, and validates core tables exist.
+- [x] Add a Beads smoke test that runs `bd init` and validates `.beads/` is created.
 - [x] Add a smoke test for `mforge init` + `mforge cell bootstrap` to ensure paths and config are created.
 
 ## Hook Plumbing Correctness

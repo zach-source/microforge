@@ -3,11 +3,11 @@ package subcmd
 import (
 	"testing"
 
-	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/rig"
 )
 
 func TestBuildSSHCommand(t *testing.T) {
-	cfg := store.DefaultRigConfig("rig", "/tmp/repo")
+	cfg := rig.DefaultRigConfig("rig", "/tmp/repo")
 	cfg.RemoteHost = "example.com"
 	cfg.RemoteUser = "alice"
 	cfg.RemotePort = 2222

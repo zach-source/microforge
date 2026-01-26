@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/beads"
+	"github.com/example/microforge/internal/rig"
+	"github.com/example/microforge/internal/turn"
 )
 
 func Assign(home string, args []string) error {
@@ -42,30 +44,88 @@ func Assign(home string, args []string) error {
 	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(cellName) == "" || strings.TrimSpace(role) == "" {
 		return fmt.Errorf("--task, --cell, and --role are required")
 	}
-	db, err := store.OpenDB(store.DBPath(home, rigName))
+	warnContextMismatch(home, rigName, "assign")
+	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	rigRow, err := store.GetRigByName(db, rigName)
+	cellCfg, err := rig.LoadCellConfig(rig.CellConfigPath(home, rigName, cellName))
 	if err != nil {
 		return err
 	}
-	cellRow, err := store.GetCell(db, rigRow.ID, cellName)
+	if err := ensureCellBootstrapped(home, rigName, cellName, role, true); err != nil {
+		return err
+	}
+	client := beads.Client{RepoPath: cfg.RepoPath}
+	issues, err := client.List(nil)
 	if err != nil {
 		return err
 	}
-	agentRow, err := store.GetAgentByCellRole(db, cellRow.ID, role)
-	if err != nil {
-		return err
+	for _, issue := range issues {
+		if strings.ToLower(issue.Type) != "assignment" {
+			continue
+		}
+		if issue.Status == "closed" || issue.Status == "done" {
+			continue
+		}
+		for _, dep := range issue.Deps {
+			if dep == "related:"+taskID {
+				fmt.Printf("Assignment already exists for task %s\n", taskID)
+				return nil
+			}
+		}
 	}
 
 	inboxRel := filepath.Join("mail/inbox", fmt.Sprintf("%s.md", taskID))
 	outboxRel := filepath.Join("mail/outbox", fmt.Sprintf("%s.md", taskID))
-	if _, err := store.CreateAssignment(db, rigRow.ID, taskID, agentRow.ID, inboxRel, outboxRel, promise, nil); err != nil {
+	turnID := ""
+	if state, err := turn.Load(rig.TurnStatePath(home, rigName)); err == nil {
+		turnID = strings.TrimSpace(state.ID)
+	}
+	if err := beadLimit(home, rigName, cellName, turnID); err != nil {
 		return err
 	}
-	_ = store.MarkTaskAssigned(db, taskID)
+	meta := beads.Meta{
+		Cell:     cellName,
+		Role:     role,
+		Scope:    cellCfg.ScopePrefix,
+		Inbox:    inboxRel,
+		Outbox:   outboxRel,
+		Promise:  promise,
+		TurnID:   turnID,
+		Worktree: cellCfg.WorktreePath,
+	}
+	body := "Assigned work for task " + taskID
+	if task, err := client.Show(nil, taskID); err == nil {
+		if strings.TrimSpace(task.Title) != "" {
+			body = fmt.Sprintf("Assigned work for task %s: %s", taskID, task.Title)
+		}
+	}
+	desc := beads.RenderMeta(meta) + "\n\n" + body
+	req := beads.CreateRequest{
+		Title:       "Assignment " + taskID,
+		Type:        "assignment",
+		Priority:    "p2",
+		Status:      "open",
+		Description: desc,
+		Deps:        []string{"related:" + taskID},
+	}
+	assn, err := client.Create(nil, req)
+	if err != nil {
+		return err
+	}
+	if task, err := client.Show(nil, taskID); err == nil {
+		mail, _ := writeAssignmentInbox(cellCfg.WorktreePath, inboxRel, outboxRel, promise, task)
+		_ = createMailBead(client, meta, "Mail "+assn.ID, mail, []string{"related:" + assn.ID})
+	}
+	emitOrchestrationEvent(cfg.RepoPath, beads.Meta{
+		Cell:      cellName,
+		Role:      role,
+		Scope:     cellCfg.ScopePrefix,
+		TurnID:    turnID,
+		Kind:      "assignment_created",
+		MailboxID: "",
+	}, fmt.Sprintf("Assignment %s created", assn.ID), []string{"related:" + taskID})
 	fmt.Printf("Assigned task %s -> %s/%s\n", taskID, cellName, role)
 	return nil
 }

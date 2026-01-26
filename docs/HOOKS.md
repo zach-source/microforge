@@ -3,7 +3,7 @@
 Microforge generates `.claude/settings.json` inside each cell worktree.
 
 - Stop hook -> `mforge hook stop`
-  - Claims next queued assignment for active agent in SQLite
+  - Claims next ready assignment bead for the active agent
   - Writes an inbox mail file
   - Returns JSON `{ "continue": true, "reason": ... }` to force iterative continuation
 

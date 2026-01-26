@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/beads"
+	"github.com/example/microforge/internal/rig"
+	"github.com/example/microforge/internal/turn"
 )
 
 func Architect(home string, args []string) error {
@@ -55,17 +57,16 @@ func architectRequest(home string, args []string, title string) error {
 	if strings.TrimSpace(cellName) == "" || strings.TrimSpace(details) == "" {
 		return fmt.Errorf("--cell and --details are required")
 	}
-	db, err := store.OpenDB(store.DBPath(home, rigName))
+	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	rigRow, err := store.GetRigByName(db, rigName)
-	if err != nil {
-		return err
+	client := beads.Client{RepoPath: cfg.RepoPath}
+	turnID := ""
+	if state, err := turn.Load(rig.TurnStatePath(home, rigName)); err == nil {
+		turnID = strings.TrimSpace(state.ID)
 	}
-	cellRow, err := store.GetCell(db, rigRow.ID, cellName)
-	if err != nil {
+	if err := beadLimit(home, rigName, cellName, turnID); err != nil {
 		return err
 	}
 	payload := map[string]any{
@@ -74,7 +75,15 @@ func architectRequest(home string, args []string, title string) error {
 		"scope":   scope,
 	}
 	payloadJSON, _ := json.Marshal(payload)
-	if _, err := store.CreateRequest(db, rigRow.ID, cellRow.ID, "architect", "med", "p2", scope, string(payloadJSON)); err != nil {
+	meta := beads.Meta{Cell: cellName, SourceRole: "architect", Scope: scope, TurnID: turnID}
+	_, err = client.Create(nil, beads.CreateRequest{
+		Title:       title,
+		Type:        "request",
+		Priority:    "p2",
+		Status:      "open",
+		Description: beads.RenderMeta(meta) + "\n\n" + string(payloadJSON),
+	})
+	if err != nil {
 		return err
 	}
 	fmt.Println("Created architect request")

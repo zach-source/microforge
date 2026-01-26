@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - `cmd/mforge/` holds the CLI entrypoint (`main` package) for the `mforge` binary.
-- `internal/` contains the core packages (SQLite queue, tmux orchestration, hooks, task/agent logic). Keep new packages scoped and internal-only.
+- `internal/` contains the core packages (Beads client, tmux orchestration, hooks, task/agent logic). Keep new packages scoped and internal-only.
 - `docs/` is for user-facing guides and design notes.
 - `scripts/` contains helper scripts for local workflows.
 - `Makefile` defines common dev commands.
@@ -32,5 +32,6 @@
   - Screenshots or logs when behavior is CLI-visible.
 
 ## Agent-Specific Notes
-- This project orchestrates long-lived agents via SQLite + tmux. Keep changes deterministic and CLI-driven.
+- This project orchestrates long-lived agents via Beads + tmux. Keep changes deterministic and CLI-driven.
 - Prefer extending existing workflows (`mforge task`, `mforge agent`, `mforge manager`) instead of adding parallel command paths.
+- Bead creation can be rate-limited per cell/turn via `MF_BEAD_LIMIT_PER_TURN`.

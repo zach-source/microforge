@@ -8,18 +8,22 @@ import (
 	"os"
 	"strings"
 
+	"github.com/example/microforge/internal/beads"
 	"github.com/example/microforge/internal/hooks"
-	"github.com/example/microforge/internal/store"
 )
 
 func Hook(home string, args []string) error {
-	if len(args) < 1 { return fmt.Errorf("usage: mforge hook <stop|guardrails> ...") }
+	if len(args) < 1 {
+		return fmt.Errorf("usage: mforge hook <stop|guardrails> ...")
+	}
 	op := args[0]
 	rest := args[1:]
 
 	inBytes, _ := io.ReadAll(os.Stdin)
 	var in hooks.ClaudeHookInput
-	if len(inBytes) > 0 { _ = json.Unmarshal(inBytes, &in) }
+	if len(inBytes) > 0 {
+		_ = json.Unmarshal(inBytes, &in)
+	}
 	cwd := strings.TrimSpace(in.Cwd)
 	if cwd == "" {
 		wd, _ := os.Getwd()
@@ -30,19 +34,25 @@ func Hook(home string, args []string) error {
 	case "stop":
 		_ = rest // role is selected by agent wake/spawn via active-agent.json
 		identity, err := hooks.LoadIdentityFromCWD(cwd)
-		if err != nil { return err }
-		db, err := store.OpenDB(identity.DBPath)
-		if err != nil { return err }
-		defer db.Close()
-		resp, err := hooks.StopHook(context.Background(), db, identity)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
+		client := beads.Client{RepoPath: identity.RepoPath}
+		resp, err := hooks.StopHook(context.Background(), client, identity)
+		if err != nil {
+			return err
+		}
 		return json.NewEncoder(os.Stdout).Encode(resp)
 
 	case "guardrails":
 		identity, err := hooks.LoadIdentityFromCWD(cwd)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		dec, err := hooks.GuardrailsHook(in, identity)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		return json.NewEncoder(os.Stdout).Encode(dec)
 
 	default:

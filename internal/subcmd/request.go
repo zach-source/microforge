@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/beads"
+	"github.com/example/microforge/internal/rig"
+	"github.com/example/microforge/internal/turn"
 )
 
 type requestPayload struct {
@@ -69,24 +71,46 @@ func Request(home string, args []string) error {
 		if strings.TrimSpace(payload) == "" {
 			payload = "{}"
 		}
-		db, err := store.OpenDB(store.DBPath(home, rigName))
+		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
 			return err
 		}
-		defer db.Close()
-		rigRow, err := store.GetRigByName(db, rigName)
+		client := beads.Client{RepoPath: cfg.RepoPath}
+		turnID := ""
+		if state, err := turn.Load(rig.TurnStatePath(home, rigName)); err == nil {
+			turnID = strings.TrimSpace(state.ID)
+		}
+		if err := beadLimit(home, rigName, cellName, turnID); err != nil {
+			return err
+		}
+		meta := beads.Meta{
+			Cell:       cellName,
+			SourceRole: role,
+			Scope:      scope,
+			Kind:       "request",
+			Severity:   severity,
+			TurnID:     turnID,
+		}
+		desc := beads.RenderMeta(meta) + "\n\n" + payload
+		title := "Request from " + role
+		payloadData := requestPayload{}
+		if err := json.Unmarshal([]byte(payload), &payloadData); err == nil {
+			if strings.TrimSpace(payloadData.Title) != "" {
+				title = payloadData.Title
+			}
+		}
+		req := beads.CreateRequest{
+			Title:       title,
+			Type:        "request",
+			Priority:    priority,
+			Status:      "open",
+			Description: desc,
+		}
+		issue, err := client.Create(nil, req)
 		if err != nil {
 			return err
 		}
-		cellRow, err := store.GetCell(db, rigRow.ID, cellName)
-		if err != nil {
-			return err
-		}
-		r, err := store.CreateRequest(db, rigRow.ID, cellRow.ID, role, severity, priority, scope, payload)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Created request %s\n", r.ID)
+		fmt.Printf("Created request %s\n", issue.ID)
 		return nil
 
 	case "list":
@@ -114,40 +138,31 @@ func Request(home string, args []string) error {
 				}
 			}
 		}
-		db, err := store.OpenDB(store.DBPath(home, rigName))
+		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
 			return err
 		}
-		defer db.Close()
-		rigRow, err := store.GetRigByName(db, rigName)
-		if err != nil {
-			return err
-		}
-		var cellID *string
-		if strings.TrimSpace(cellName) != "" {
-			cellRow, err := store.GetCell(db, rigRow.ID, cellName)
-			if err != nil {
-				return err
-			}
-			cellID = &cellRow.ID
-		}
-		var statusPtr, priorityPtr *string
-		if strings.TrimSpace(status) != "" {
-			statusPtr = &status
-		}
-		if strings.TrimSpace(priority) != "" {
-			priorityPtr = &priority
-		}
-		list, err := store.ListRequests(db, rigRow.ID, cellID, statusPtr, priorityPtr)
+		client := beads.Client{RepoPath: cfg.RepoPath}
+		list, err := client.List(nil)
 		if err != nil {
 			return err
 		}
 		for _, r := range list {
-			scope := ""
-			if r.ScopePrefix.Valid {
-				scope = r.ScopePrefix.String
+			if strings.ToLower(r.Type) != "request" {
+				continue
 			}
-			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s", r.ID, r.Status, r.Priority, r.Severity, r.SourceRole, r.CellID)
+			if strings.TrimSpace(status) != "" && r.Status != status {
+				continue
+			}
+			if strings.TrimSpace(priority) != "" && r.Priority != priority {
+				continue
+			}
+			meta := beads.ParseMeta(r.Description)
+			if strings.TrimSpace(cellName) != "" && meta.Cell != cellName {
+				continue
+			}
+			scope := meta.Scope
+			fmt.Printf("%s\t%s\t%s\t%s\t%s", r.ID, r.Status, r.Priority, meta.SourceRole, meta.Cell)
 			if scope != "" {
 				fmt.Printf("\t(scope=%s)", scope)
 			}
@@ -178,65 +193,90 @@ func Request(home string, args []string) error {
 		if strings.TrimSpace(reqID) == "" || strings.TrimSpace(action) == "" {
 			return fmt.Errorf("--request and --action are required")
 		}
-		db, err := store.OpenDB(store.DBPath(home, rigName))
+		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
 			return err
 		}
-		defer db.Close()
-		rigRow, err := store.GetRigByName(db, rigName)
+		client := beads.Client{RepoPath: cfg.RepoPath}
+		reqIssue, err := client.Show(nil, reqID)
 		if err != nil {
 			return err
-		}
-		req, err := store.GetRequest(db, reqID)
-		if err != nil {
-			return err
-		}
-		if req.RigID != rigRow.ID {
-			return fmt.Errorf("request not in rig %s", rigName)
 		}
 
 		switch action {
 		case "create-task":
-			cellRow, err := store.GetCellByID(db, req.CellID)
-			if err != nil {
-				return err
-			}
-			agentRow, err := store.GetAgentByCellRole(db, cellRow.ID, "builder")
-			if err != nil {
-				return err
-			}
+			meta := beads.ParseMeta(reqIssue.Description)
 			payload := requestPayload{}
-			_ = json.Unmarshal([]byte(req.Payload), &payload)
+			_ = json.Unmarshal([]byte(beads.StripMeta(reqIssue.Description)), &payload)
 			title := strings.TrimSpace(payload.Title)
 			if title == "" {
-				title = fmt.Sprintf("Request %s", req.ID)
+				title = fmt.Sprintf("Request %s", reqIssue.ID)
 			}
 			body := strings.TrimSpace(payload.Body)
 			if body == "" {
-				body = req.Payload
+				body = beads.StripMeta(reqIssue.Description)
 			}
 			kind := strings.TrimSpace(payload.Kind)
 			scope := payload.Scope
-			if scope == "" && req.ScopePrefix.Valid {
-				scope = req.ScopePrefix.String
+			if scope == "" {
+				scope = meta.Scope
 			}
-			task, err := store.CreateTask(db, rigRow.ID, kind, title, body, scope)
+			taskMeta := beads.Meta{Cell: meta.Cell, Scope: scope, Kind: kind, Title: title}
+			taskDesc := beads.RenderMeta(taskMeta) + "\n\n" + body
+			taskIssue, err := client.Create(nil, beads.CreateRequest{
+				Title:       title,
+				Type:        "task",
+				Priority:    reqIssue.Priority,
+				Status:      "open",
+				Description: taskDesc,
+				Deps:        []string{"related:" + reqIssue.ID},
+			})
 			if err != nil {
 				return err
 			}
-			inboxRel := fmt.Sprintf("mail/inbox/%s.md", task.ID)
-			outboxRel := fmt.Sprintf("mail/outbox/%s.md", task.ID)
-			if _, err := store.CreateAssignment(db, rigRow.ID, task.ID, agentRow.ID, inboxRel, outboxRel, "DONE", nil); err != nil {
+			cellCfg, err := rig.LoadCellConfig(rig.CellConfigPath(home, rigName, meta.Cell))
+			if err != nil {
 				return err
 			}
-			_ = store.MarkTaskAssigned(db, task.ID)
-			_ = store.UpdateRequestStatus(db, req.ID, "triaged")
-			fmt.Printf("Triaged request %s -> task %s\n", req.ID, task.ID)
+			inboxRel := fmt.Sprintf("mail/inbox/%s.md", taskIssue.ID)
+			outboxRel := fmt.Sprintf("mail/outbox/%s.md", taskIssue.ID)
+			turnID := ""
+			if state, err := turn.Load(rig.TurnStatePath(home, rigName)); err == nil {
+				turnID = strings.TrimSpace(state.ID)
+			}
+			if err := beadLimit(home, rigName, meta.Cell, turnID); err != nil {
+				return err
+			}
+			assnMeta := beads.Meta{
+				Cell:     meta.Cell,
+				Role:     "builder",
+				Scope:    scope,
+				Inbox:    inboxRel,
+				Outbox:   outboxRel,
+				Promise:  "DONE",
+				TurnID:   turnID,
+				Worktree: cellCfg.WorktreePath,
+			}
+			assnDesc := beads.RenderMeta(assnMeta) + "\n\n" + title
+			if _, err := client.Create(nil, beads.CreateRequest{
+				Title:       "Assignment " + taskIssue.ID,
+				Type:        "assignment",
+				Priority:    reqIssue.Priority,
+				Status:      "open",
+				Description: assnDesc,
+				Deps:        []string{"related:" + taskIssue.ID},
+			}); err != nil {
+				return err
+			}
+			_, _ = client.UpdateStatus(nil, reqIssue.ID, "in_progress")
+			fmt.Printf("Triaged request %s -> task %s\n", reqIssue.ID, taskIssue.ID)
 			return nil
 		case "merge":
-			return store.UpdateRequestStatus(db, req.ID, "merged")
+			_, err := client.Close(nil, reqIssue.ID, "merged")
+			return err
 		case "block":
-			return store.UpdateRequestStatus(db, req.ID, "blocked")
+			_, err := client.UpdateStatus(nil, reqIssue.ID, "blocked")
+			return err
 		default:
 			return fmt.Errorf("unknown action: %s", action)
 		}

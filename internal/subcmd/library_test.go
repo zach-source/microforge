@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"github.com/example/microforge/internal/library"
-	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/rig"
+	"github.com/example/microforge/internal/util"
 )
 
 func TestLibraryQueryCommand(t *testing.T) {
@@ -16,12 +17,15 @@ func TestLibraryQueryCommand(t *testing.T) {
 	}))
 	defer server.Close()
 
-	home, _, db := setupRigForSubcmd(t)
-	defer db.Close()
+	home := t.TempDir()
+	rigDir := rig.RigDir(home, "rig")
+	if err := util.EnsureDir(rigDir); err != nil {
+		t.Fatalf("ensure rig dir: %v", err)
+	}
 
-	cfg := store.DefaultRigConfig("rig", "/tmp/repo")
+	cfg := rig.DefaultRigConfig("rig", "/tmp/repo")
 	cfg.LibraryAddr = server.Listener.Addr().String()
-	if err := store.SaveRigConfig(store.RigConfigPath(home, "rig"), cfg); err != nil {
+	if err := rig.SaveRigConfig(rig.RigConfigPath(home, "rig"), cfg); err != nil {
 		t.Fatalf("save rig config: %v", err)
 	}
 

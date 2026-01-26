@@ -10,4 +10,10 @@ A cell has a shared git worktree and three roles:
 A global **manager** triages tasks and assigns them to cell roles.
 An optional **architect** keeps docs and cross-service interfaces coherent.
 
-The “Ralph-style loop” here is implemented using a Stop hook that claims queued work from SQLite and injects it into Claude’s context.
+Cells can also run as a **single agent** (merged triad) using the `cell` role.
+Role behavior is defined by editable files under `.mf/roles/` in each worktree.
+
+The **engine** and **round** commands orchestrate deterministic phases
+(intake → plan → execute → review) using Beads events and assignments.
+
+The “Ralph-style loop” here is implemented using a Stop hook that claims ready assignment beads and injects them into Claude’s context.

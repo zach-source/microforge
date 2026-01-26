@@ -2,14 +2,15 @@ package hooks
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/example/microforge/internal/store"
+	"github.com/example/microforge/internal/beads"
+	"github.com/example/microforge/internal/rig"
+	"github.com/example/microforge/internal/turn"
 	"github.com/example/microforge/internal/util"
 )
 
@@ -31,16 +32,22 @@ type DecisionResponse struct {
 }
 
 type AgentIdentity struct {
-	RigName  string `json:"rig_name"`
-	DBPath   string `json:"db_path"`
-	CellName string `json:"cell_name"`
-	Role     string `json:"role"`
-	AgentID  string `json:"agent_id"`
-	Scope    string `json:"scope"`
-	Worktree string `json:"worktree_path"`
-	Inbox    string `json:"inbox"`
-	Outbox   string `json:"outbox"`
-	Archive  string `json:"archive"`
+	RigName     string `json:"rig_name"`
+	RigHome     string `json:"rig_home"`
+	RepoPath    string `json:"repo_path"`
+	CellName    string `json:"cell_name"`
+	Role        string `json:"role"`
+	Scope       string `json:"scope"`
+	Worktree    string `json:"worktree_path"`
+	TmuxSession string `json:"tmux_session"`
+	Inbox       string `json:"inbox"`
+	Outbox      string `json:"outbox"`
+	Archive     string `json:"archive"`
+	AgentID     string `json:"agent_id,omitempty"`
+	RoleID      string `json:"role_id,omitempty"`
+	MailboxID   string `json:"mailbox_id,omitempty"`
+	HookID      string `json:"hook_id,omitempty"`
+	Class       string `json:"class,omitempty"`
 }
 
 func LoadIdentityFromCWD(cwd string) (AgentIdentity, error) {
@@ -56,37 +63,194 @@ func LoadIdentityFromCWD(cwd string) (AgentIdentity, error) {
 	return id, nil
 }
 
-func StopHook(ctx context.Context, db *sql.DB, identity AgentIdentity) (StopHookResponse, error) {
-	assn, ok, err := store.ClaimNextAssignmentForAgent(db, identity.AgentID)
+func StopHook(ctx context.Context, client beads.Client, identity AgentIdentity) (StopHookResponse, error) {
+	ready, err := client.Ready(ctx)
 	if err != nil {
 		return StopHookResponse{}, err
 	}
-	if !ok {
+	turnID := currentTurnID(identity)
+	var chosen beads.Issue
+	var meta beads.Meta
+	for _, issue := range ready {
+		if strings.ToLower(issue.Type) != "assignment" {
+			continue
+		}
+		m := beads.ParseMeta(issue.Description)
+		if m.Cell != "" && m.Cell != identity.CellName {
+			continue
+		}
+		if m.Role != "" && m.Role != identity.Role {
+			continue
+		}
+		if turnID != "" && m.TurnID != "" && m.TurnID != turnID {
+			continue
+		}
+		chosen = issue
+		meta = m
+		break
+	}
+	if chosen.ID == "" {
+		UpdateHeartbeat(identity, "idle", "", turnID, "")
+		updateHookIdle(ctx, client, identity, turnID)
+		emitHookIdleEvent(ctx, client, identity, turnID)
 		return StopHookResponse{Continue: false}, nil
 	}
+	_, _ = client.UpdateStatus(ctx, chosen.ID, "in_progress")
 
-	var title, body, kind string
-	var scope sql.NullString
-	row := db.QueryRow("SELECT title, body, kind, scope_prefix FROM tasks WHERE id = ?", assn.TaskID)
-	if err := row.Scan(&title, &body, &kind, &scope); err != nil {
-		return StopHookResponse{}, err
+	inboxRel := meta.Inbox
+	if strings.TrimSpace(inboxRel) == "" {
+		inboxRel = filepath.Join("mail", "inbox", fmt.Sprintf("%s.md", chosen.ID))
 	}
-	_ = scope
+	outboxRel := meta.Outbox
+	if strings.TrimSpace(outboxRel) == "" {
+		outboxRel = filepath.Join("mail", "outbox", fmt.Sprintf("%s.md", chosen.ID))
+	}
+	promise := meta.Promise
+	if strings.TrimSpace(promise) == "" {
+		promise = "DONE:" + chosen.ID
+	}
 
-	inboxAbs := filepath.Join(identity.Worktree, assn.InboxRel)
-	mail := renderMail(identity, assn.TaskID, kind, title, body, assn.OutboxRel, assn.CompletionPromise)
+	body := strings.TrimSpace(beads.StripMeta(chosen.Description))
+	inboxAbs := filepath.Join(identity.Worktree, inboxRel)
+	mail := renderMail(identity, chosen.ID, chosen.Type, chosen.Title, body, outboxRel, promise)
 	if err := util.AtomicWriteFile(inboxAbs, []byte(mail), 0o644); err != nil {
 		return StopHookResponse{}, err
 	}
-	_ = store.MarkTaskAssigned(db, assn.TaskID)
+
+	updateHookBead(ctx, client, identity, chosen, meta, mail)
+	emitHookEvent(ctx, client, identity, chosen, meta)
 
 	reason := fmt.Sprintf("New assignment claimed: %s (%s). Read %s, write %s, include promise %q when complete.",
-		assn.TaskID, identity.Role, assn.InboxRel, assn.OutboxRel, assn.CompletionPromise)
+		chosen.ID, identity.Role, inboxRel, outboxRel, promise)
+	if shouldResetContext() {
+		reason = "CONTEXT RESET REQUIRED: Drop prior task context. Start fresh with this assignment only.\n" + reason
+	}
 
+	UpdateHeartbeat(identity, "claimed", chosen.ID, turnID, "")
 	return StopHookResponse{
 		Continue: true,
 		Reason:   reason + "\n\n=== BEGIN ASSIGNMENT ===\n" + mail + "\n=== END ASSIGNMENT ===",
 	}, nil
+}
+
+func shouldResetContext() bool {
+	val := strings.TrimSpace(os.Getenv("MF_CLEAR_CONTEXT_ON_CLAIM"))
+	if val == "" {
+		return true
+	}
+	return strings.EqualFold(val, "1") || strings.EqualFold(val, "true") || strings.EqualFold(val, "yes")
+}
+
+func updateHookBead(ctx context.Context, client beads.Client, identity AgentIdentity, issue beads.Issue, meta beads.Meta, mail string) {
+	if strings.TrimSpace(identity.HookID) == "" {
+		return
+	}
+	descMeta := beads.Meta{
+		Cell:    identity.CellName,
+		Role:    identity.Role,
+		Scope:   identity.Scope,
+		Inbox:   meta.Inbox,
+		Outbox:  meta.Outbox,
+		Promise: meta.Promise,
+		TurnID:  meta.TurnID,
+		Kind:    "hook",
+	}
+	desc := beads.RenderMeta(descMeta) + "\n\n" + mail
+	if _, err := client.UpdateDescription(ctx, identity.HookID, desc); err != nil {
+		if err == beads.ErrUpdateDescriptionUnsupported {
+			_, _ = client.Create(ctx, beads.CreateRequest{
+				Title:       fmt.Sprintf("Hook event %s/%s", identity.CellName, identity.Role),
+				Type:        "hook",
+				Priority:    "p2",
+				Status:      "open",
+				Description: desc,
+				Deps:        []string{"related:" + issue.ID},
+			})
+		}
+	}
+}
+
+func emitHookEvent(ctx context.Context, client beads.Client, identity AgentIdentity, issue beads.Issue, meta beads.Meta) {
+	descMeta := beads.Meta{
+		Cell:    identity.CellName,
+		Role:    identity.Role,
+		Scope:   identity.Scope,
+		TurnID:  meta.TurnID,
+		Kind:    "hook_claim",
+		Title:   issue.Title,
+		AgentID: identity.AgentID,
+		HookID:  identity.HookID,
+	}
+	desc := beads.RenderMeta(descMeta)
+	_, _ = client.Create(ctx, beads.CreateRequest{
+		Title:       fmt.Sprintf("Hook claimed %s", issue.ID),
+		Type:        "event",
+		Priority:    "p3",
+		Status:      "open",
+		Description: desc,
+		Deps:        []string{"related:" + issue.ID},
+	})
+}
+
+func updateHookIdle(ctx context.Context, client beads.Client, identity AgentIdentity, turnID string) {
+	if strings.TrimSpace(identity.HookID) == "" {
+		return
+	}
+	descMeta := beads.Meta{
+		Cell:   identity.CellName,
+		Role:   identity.Role,
+		Scope:  identity.Scope,
+		TurnID: turnID,
+		Kind:   "hook",
+	}
+	desc := beads.RenderMeta(descMeta) + "\n\nIDLE"
+	if _, err := client.UpdateDescription(ctx, identity.HookID, desc); err != nil {
+		if err == beads.ErrUpdateDescriptionUnsupported {
+			_, _ = client.Create(ctx, beads.CreateRequest{
+				Title:       fmt.Sprintf("Hook idle %s/%s", identity.CellName, identity.Role),
+				Type:        "hook",
+				Priority:    "p3",
+				Status:      "open",
+				Description: desc,
+			})
+		}
+	}
+}
+
+func emitHookIdleEvent(ctx context.Context, client beads.Client, identity AgentIdentity, turnID string) {
+	descMeta := beads.Meta{
+		Cell:    identity.CellName,
+		Role:    identity.Role,
+		Scope:   identity.Scope,
+		TurnID:  turnID,
+		Kind:    "hook_idle",
+		AgentID: identity.AgentID,
+		HookID:  identity.HookID,
+	}
+	desc := beads.RenderMeta(descMeta)
+	_, _ = client.Create(ctx, beads.CreateRequest{
+		Title:       fmt.Sprintf("Hook idle %s/%s", identity.CellName, identity.Role),
+		Type:        "event",
+		Priority:    "p3",
+		Status:      "open",
+		Description: desc,
+	})
+}
+
+func currentTurnID(identity AgentIdentity) string {
+	home := strings.TrimSpace(identity.RigHome)
+	if home == "" {
+		home = rig.DefaultHome()
+		if v := strings.TrimSpace(os.Getenv("MF_HOME")); v != "" {
+			home = v
+		}
+	}
+	statePath := rig.TurnStatePath(home, identity.RigName)
+	state, err := turn.Load(statePath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(state.ID)
 }
 
 func renderMail(id AgentIdentity, taskID, kind, title, body, outRel, promise string) string {
