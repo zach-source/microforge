@@ -680,7 +680,7 @@ _mforge_complete() {
       ;;
     rig)
       if [ $COMP_CWORD -eq 2 ]; then
-        _mforge_complete_from_list "$cur" list delete rename backup restore
+        _mforge_complete_from_list "$cur" list delete rename backup restore message
         return
       fi
       case "$sub" in
@@ -703,6 +703,23 @@ _mforge_complete() {
           ;;
         restore)
           _mforge_complete_from_list "$cur" --name --force
+          return
+          ;;
+        message)
+          case "$prev" in
+            --cell)
+              _mforge_complete_from_list "$cur" $(_mforge_cells "$rig")
+              return
+              ;;
+            --role)
+              _mforge_complete_from_list "$cur" builder monitor reviewer architect cell
+              return
+              ;;
+            --text)
+              return
+              ;;
+          esac
+          _mforge_complete_from_list "$cur" --cell --role --text
           return
           ;;
       esac

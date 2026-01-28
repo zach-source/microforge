@@ -567,7 +567,7 @@ _mforge() {
       ;;
     rig)
       if (( CURRENT == 3 )); then
-        _mforge_complete_from_list list delete rename backup restore
+        _mforge_complete_from_list list delete rename backup restore message
         return
       fi
       case "$sub" in
@@ -593,6 +593,23 @@ _mforge() {
             return
           fi
           _mforge_complete_from_list --name --force
+          return
+          ;;
+        message)
+          case "$prev" in
+            --cell)
+              _mforge_complete_from_list $(_mforge_cells "$rig")
+              return
+              ;;
+            --role)
+              _mforge_complete_from_list builder monitor reviewer architect cell
+              return
+              ;;
+            --text)
+              return
+              ;;
+          esac
+          _mforge_complete_from_list --cell --role --text
           return
           ;;
       esac

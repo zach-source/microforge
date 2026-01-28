@@ -19,6 +19,11 @@ mforge init <rig> --repo <path>
 mforge context set <rig>
 ```
 
+### Rig messaging
+```bash
+mforge rig message <rig> [--cell <cell>] [--role <role>] --text "<msg>"
+```
+
 ### Agent lifecycle
 ```bash
 mforge agent create <path> --description "<text>" [--class crew|worker]

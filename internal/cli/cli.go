@@ -109,7 +109,7 @@ mforge bead triage --id <id> --cell <cell> --role <role>
   mforge tui [--interval <seconds>] [--remote] [--watch] [--role <role>]
   mforge migrate beads [--all]
   mforge migrate rig [--all]
-  mforge rig <list|delete|rename|backup|restore> ...
+  mforge rig <list|delete|rename|backup|restore|message> ...
   mforge ssh <rig> --cmd <command...> [--tty]
   mforge context <get|set|unset|list> [<rig>]
   mforge completions <install|path|bash|zsh>
@@ -641,6 +641,7 @@ mforge rig delete <rig>
 mforge rig rename <old> <new>
 mforge rig backup <rig> [--out <path>]
 mforge rig restore <archive> --name <rig> [--force]
+mforge rig message <rig> [--cell <cell>] [--role <role>] --text <msg>
 `), true
 	case "completions":
 		return strings.TrimSpace(`

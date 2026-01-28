@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/example/microforge/internal/beads"
 	"github.com/example/microforge/internal/context"
 	"github.com/example/microforge/internal/rig"
 	"github.com/example/microforge/internal/util"
@@ -17,7 +18,7 @@ import (
 
 func Rig(home string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: mforge rig <list|delete|rename|backup|restore> ...")
+		return fmt.Errorf("usage: mforge rig <list|delete|rename|backup|restore|message> ...")
 	}
 	op := args[0]
 	rest := args[1:]
@@ -32,6 +33,8 @@ func Rig(home string, args []string) error {
 		return rigBackup(home, rest)
 	case "restore":
 		return rigRestore(home, rest)
+	case "message":
+		return rigMessage(home, rest)
 	default:
 		return fmt.Errorf("unknown rig subcommand: %s", op)
 	}
@@ -200,6 +203,103 @@ func rigRestore(home string, args []string) error {
 		_ = rig.SaveRigConfig(cfgPath, cfg)
 	}
 	fmt.Printf("Restored rig %s from %s\n", name, archive)
+	return nil
+}
+
+func rigMessage(home string, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: mforge rig message <rig> [--cell <cell>] [--role <role>] --text <msg>")
+	}
+	rigName := args[0]
+	cellName := ""
+	roleName := ""
+	text := ""
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--cell":
+			if i+1 < len(args) {
+				cellName = strings.TrimSpace(args[i+1])
+				i++
+			}
+		case "--role":
+			if i+1 < len(args) {
+				roleName = strings.TrimSpace(args[i+1])
+				i++
+			}
+		case "--text":
+			if i+1 < len(args) {
+				text = strings.TrimSpace(args[i+1])
+				i++
+			}
+		}
+	}
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("--text is required")
+	}
+	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
+	if err != nil {
+		return err
+	}
+	cells, err := rig.ListCellConfigs(home, rigName)
+	if err != nil {
+		return err
+	}
+	if cellName != "" {
+		found := false
+		for _, c := range cells {
+			if c.Name == cellName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("unknown cell: %s", cellName)
+		}
+	}
+	roles := []string{"builder", "monitor", "reviewer", "architect", "cell"}
+	if roleName != "" {
+		roles = []string{roleName}
+	}
+	ts := time.Now().UTC().Format(time.RFC3339)
+	sent := 0
+	for _, cell := range cells {
+		if cellName != "" && cell.Name != cellName {
+			continue
+		}
+		for _, role := range roles {
+			if !roleExists(cell.WorktreePath, role) {
+				continue
+			}
+			payload := map[string]string{
+				"type":       "rig_message",
+				"rig":        rigName,
+				"cell":       cell.Name,
+				"role":       role,
+				"text":       text,
+				"created_at": ts,
+			}
+			signalDir := filepath.Join(cell.WorktreePath, "mail", "signals")
+			if err := util.EnsureDir(signalDir); err == nil {
+				name := fmt.Sprintf("rig-message-%s-%s-%s.json", time.Now().UTC().Format("20060102T150405Z"), cell.Name, role)
+				if b, err := json.MarshalIndent(payload, "", "  "); err == nil {
+					_ = util.AtomicWriteFile(filepath.Join(signalDir, name), b, 0o644)
+				}
+			}
+			meta := beads.Meta{
+				Cell:  cell.Name,
+				Role:  role,
+				Scope: cell.ScopePrefix,
+				Kind:  "rig_message",
+				Title: "Rig message",
+			}
+			emitOrchestrationEvent(cfg.RepoPath, meta, text, nil)
+			sent++
+		}
+	}
+	if sent == 0 {
+		return fmt.Errorf("no matching agents found to message")
+	}
+	fmt.Printf("Sent rig message to %d target(s)\n", sent)
 	return nil
 }
 

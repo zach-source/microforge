@@ -61,6 +61,7 @@ mforge rig backup mono
 mforge rig rename mono mono-new
 mforge rig restore ~/.microforge/backups/rig-mono-*.tar.gz --name mono
 mforge rig delete mono
+mforge rig message mono --cell payments --role builder --text "Check mail/inbox and start the next task."
 ```
 
 3) Spawn and wake the builder:
