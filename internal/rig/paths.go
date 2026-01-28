@@ -33,4 +33,8 @@ func CellClaudeSettingsPath(home, rig, cell string) string {
 func CellConfigPath(home, rig, cell string) string {
 	return filepath.Join(CellDir(home, rig, cell), "cell.json")
 }
-func TurnStatePath(home, rig string) string { return filepath.Join(RigDir(home, rig), "turn.json") }
+func TurnStatePath(home, rig string) string  { return filepath.Join(RigDir(home, rig), "turn.json") }
+func TurnHistoryDir(home, rig string) string { return filepath.Join(RigDir(home, rig), "turns") }
+func TurnHistoryPath(home, rig, id string) string {
+	return filepath.Join(TurnHistoryDir(home, rig), "turn-"+id+".json")
+}

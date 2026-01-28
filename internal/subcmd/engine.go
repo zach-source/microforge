@@ -238,7 +238,7 @@ func engineRun(home, rigName string, args []string) error {
 			return err
 		}
 	}
-	if _, err := reconcile(home, rigName); err != nil {
+	if _, err := reconcile(home, rigName, false); err != nil {
 		return err
 	}
 	fmt.Println("Review: reconciled assignments and checkpointed turn state")

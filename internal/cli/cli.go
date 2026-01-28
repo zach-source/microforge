@@ -23,14 +23,18 @@ Usage:
 
   mforge agent spawn <cell> <role>
   mforge agent stop  <cell> <role>
+  mforge agent exit  <cell> <role>
   mforge agent attach <cell> <role>
   mforge agent wake <cell> <role>
   mforge agent relaunch <cell> <role>
+  mforge agent restart <cell> <role>
+  mforge agent send <cell> <role> <message> [--no-enter]
   mforge agent logs <cell> <role> [--follow] [--lines <n>] [--all]
   mforge agent heartbeat <cell> <role>
   mforge agent create <path> --description <text> [--class crew|worker]
   mforge agent bootstrap <name>
   mforge agent status [--cell <cell>] [--role <role>] [--remote] [--json]
+  mforge status [--cell <cell>] [--role <role>] [--json]
 
   mforge task create --title <t> [--body <md>] [--scope <path-prefix>] [--kind improve|fix|review|monitor|doc]
   mforge task update --task <id> --scope <path-prefix>
@@ -45,7 +49,9 @@ Usage:
   mforge engine drain [--keep]
   mforge convoy start --epic <id> [--role <role>] [--title <text>]
 
-  mforge assign --task <id> --cell <cell> --role builder|monitor|reviewer|architect|cell [--promise <token>]
+  mforge assign --task <id> --cell <cell> --role builder|monitor|reviewer|architect|cell [--promise <token>] [--quick]
+  mforge quick-assign <bead-id> <cell> [--role <role>] [--promise <token>]
+  mforge quick-assign <bead-id> <cell> [--role <role>] [--promise <token>]
   mforge request create --cell <cell> --role <role> --severity <sev> --priority <p> --scope <path> --payload <json>
   mforge request list [--cell <cell>] [--status <status>] [--priority <p>]
   mforge request triage --request <id> --action create-task|merge|block
@@ -61,23 +67,26 @@ Usage:
   mforge epic close --epic <id>
   mforge epic conflict --epic <id> --cell <cell> --details <text>
   mforge task split --task <id> --cells <a,b,c>
-  mforge manager tick [--watch]
+  mforge manager tick [--watch] [--stop-idle]
   mforge manager assign [--role <role>]
-  mforge turn start
+  mforge turn start [--name <name>]
   mforge turn status
-  mforge turn end
+  mforge turn end [--report]
   mforge turn slate
+  mforge turn list
+  mforge turn diff [--id <turn>]
   mforge turn run [--role <role>] [--wait]
   mforge round start [--wait]
   mforge round review [--wait] [--all] [--changes-only] [--base <branch>]
   mforge round merge --feature <branch> [--base <branch>]
   mforge checkpoint [--message <text>]
   mforge wait [--turn <id>] [--interval <seconds>]
-  mforge bead create --type <type> --title <title> [--cell <cell>] [--turn <id>] ...
-  mforge bead list [--type <type>] [--status <status>] [--cell <cell>] [--turn <id>]
-  mforge bead show <id>
-  mforge bead close <id>
-  mforge bead triage --id <id> --cell <cell> --role <role>
+mforge bead create --type <type> --title <title> [--cell <cell>] [--turn <id>] ...
+mforge bead list [--type <type>] [--status <status>] [--cell <cell>] [--turn <id>]
+mforge bead show <id>
+mforge bead close <id>
+mforge bead status <id> <status>
+mforge bead triage --id <id> --cell <cell> --role <role>
   mforge bead dep add <id> <dep>
   mforge bead template --type <type> --title <title> --cell <cell>
   mforge review create --title <title> --cell <cell>
@@ -96,9 +105,10 @@ Usage:
   mforge report [--cell <cell>]
   mforge library start [--addr <addr>]
   mforge library query --q <query> [--service <name>] [--addr <addr>]
-  mforge watch [--interval <seconds>] [--role <role>] [--fswatch]
-  mforge tui [--interval <seconds>] [--remote]
+  mforge watch [--interval <seconds>] [--role <role>] [--fswatch] [--tui]
+  mforge tui [--interval <seconds>] [--remote] [--watch] [--role <role>]
   mforge migrate beads [--all]
+  mforge migrate rig [--all]
   mforge rig <list|delete|rename|backup|restore> ...
   mforge ssh <rig> --cmd <command...> [--tty]
   mforge context <get|set|unset|list> [<rig>]
@@ -107,6 +117,7 @@ Usage:
   # Invoked by Claude Code hooks:
   mforge hook stop [--role <role>]
   mforge hook guardrails
+  mforge hook emit --event <name>
 
 Environment:
   MF_HOME   override default home (~/.microforge)
@@ -164,6 +175,12 @@ func Run(args []string) error {
 			return nil
 		}
 		return subcmd.Agent(home, rest)
+	case "status":
+		if hasHelpFlag(rest) {
+			printCommandUsage(cmd)
+			return nil
+		}
+		return subcmd.Status(home, rest)
 	case "task":
 		if hasHelpFlag(rest) {
 			printCommandUsage(cmd)
@@ -272,6 +289,12 @@ func Run(args []string) error {
 			return nil
 		}
 		return subcmd.Assign(home, rest)
+	case "quick-assign":
+		if hasHelpFlag(rest) {
+			printCommandUsage(cmd)
+			return nil
+		}
+		return subcmd.QuickAssign(home, rest)
 	case "manager":
 		if hasHelpFlag(rest) {
 			printCommandUsage(cmd)
@@ -282,6 +305,9 @@ func Run(args []string) error {
 		if hasHelpFlag(rest) {
 			printCommandUsage(cmd)
 			return nil
+		}
+		if len(rest) == 0 {
+			rest = []string{"status"}
 		}
 		if len(rest) > 0 && rest[0] == "run" {
 			return subcmd.TurnRun(home, rest[1:])
@@ -382,7 +408,7 @@ func maybeInjectActiveRig(cmd string, rest []string, activeRig string) []string 
 		return injectAfterSubcommand(rest, activeRig)
 	case "agent":
 		return injectAfterSubcommandWithOverride(rest, activeRig, map[string]bool{"create": true, "bootstrap": true})
-	case "assign", "wait", "report", "ssh", "checkpoint", "tui":
+	case "assign", "quick-assign", "wait", "report", "ssh", "checkpoint", "tui", "status":
 		return injectAtStart(rest, activeRig)
 	default:
 		return rest
@@ -404,7 +430,7 @@ func injectAfterSubcommandWithOverride(rest []string, activeRig string, subcomma
 
 func requiresActiveRig(cmd string) bool {
 	switch cmd {
-	case "cell", "agent", "task", "request", "epic", "manager", "turn", "bead", "review", "pr", "merge", "coordinator", "digest", "build", "deploy", "contract", "architect", "library", "engine", "convoy", "scope", "monitor", "assign", "wait", "report", "ssh", "round", "checkpoint", "tui", "watch":
+	case "cell", "agent", "task", "request", "epic", "manager", "turn", "bead", "review", "pr", "merge", "coordinator", "digest", "build", "deploy", "contract", "architect", "library", "engine", "convoy", "scope", "monitor", "assign", "quick-assign", "wait", "report", "ssh", "round", "checkpoint", "tui", "watch", "status":
 		return true
 	default:
 		return false
@@ -464,15 +490,20 @@ mforge cell agent-file <cell> --role <role>
 		return strings.TrimSpace(`
 mforge agent spawn <cell> <role>
 mforge agent stop <cell> <role>
+mforge agent exit <cell> <role>
 mforge agent attach <cell> <role>
 mforge agent wake <cell> <role>
 mforge agent relaunch <cell> <role>
+mforge agent restart <cell> <role>
+mforge agent send <cell> <role> <message> [--no-enter]
 mforge agent logs <cell> <role> [--follow] [--lines <n>] [--all]
 mforge agent heartbeat <cell> <role>
 mforge agent create <path> --description <text> [--class crew|worker]
 mforge agent bootstrap <name>
 mforge agent status [--cell <cell>] [--role <role>] [--remote] [--json]
 `), true
+	case "status":
+		return "mforge status [--cell <cell>] [--role <role>] [--json]", true
 	case "task":
 		return strings.TrimSpace(`
 mforge task create --title <t> [--body <md>] [--scope <path-prefix>] [--kind improve|fix|review|monitor|doc]
@@ -499,7 +530,9 @@ mforge engine drain [--keep]
 	case "convoy":
 		return "mforge convoy start --epic <id> [--role <role>] [--title <text>]", true
 	case "assign":
-		return "mforge assign --task <id> --cell <cell> --role <role> [--promise <token>]", true
+		return "mforge assign --task <id> --cell <cell> --role <role> [--promise <token>] [--quick]", true
+	case "quick-assign":
+		return "mforge quick-assign <bead-id> <cell> [--role <role>] [--promise <token>]", true
 	case "request":
 		return strings.TrimSpace(`
 mforge request create --cell <cell> --role <role> --severity <sev> --priority <p> --scope <path> --payload <json>
@@ -525,7 +558,7 @@ mforge epic conflict --epic <id> --cell <cell> --details <text>
 `), true
 	case "manager":
 		return strings.TrimSpace(`
-mforge manager tick [--watch]
+  mforge manager tick [--watch] [--stop-idle]
 mforge manager assign [--role <role>]
 `), true
 	case "turn":
@@ -534,6 +567,8 @@ mforge turn start
 mforge turn status
 mforge turn end
 mforge turn slate
+mforge turn list
+mforge turn diff [--id <turn>]
 mforge turn run [--role <role>] [--wait]
 `), true
 	case "round":
@@ -548,6 +583,7 @@ mforge bead create --type <type> --title <title> [--priority <p>] [--status <sta
 mforge bead list [--type <type>] [--status <status>] [--cell <cell>] [--priority <p>] [--turn <id>]
 mforge bead show <id>
 mforge bead close <id> [--reason <text>]
+mforge bead status <id> <status> [--reason <text>]
 mforge bead triage --id <id> --cell <cell> --role <role> [--turn <id>] [--promise <token>]
 mforge bead dep add <id> <dep>
 mforge bead template --type <type> --title <title> --cell <cell> [--scope <path>] [--priority <p>] [--turn <id>]
@@ -586,11 +622,11 @@ mforge library start [--addr <addr>]
 mforge library query --q <query> [--service <name>] [--addr <addr>]
 `), true
 	case "watch":
-		return "mforge watch [--interval <seconds>] [--role <role>] [--fswatch]", true
+		return "mforge watch [--interval <seconds>] [--role <role>] [--fswatch] [--tui]", true
 	case "migrate":
-		return "mforge migrate beads [--all]", true
+		return "mforge migrate beads [--all]\nmforge migrate rig [--all]", true
 	case "tui":
-		return "mforge tui [--interval <seconds>] [--remote]", true
+		return "mforge tui [--interval <seconds>] [--remote] [--watch] [--role <role>]", true
 	case "context":
 		return strings.TrimSpace(`
 mforge context get
@@ -623,6 +659,7 @@ mforge completions zsh
 		return strings.TrimSpace(`
 mforge hook stop [--role <role>]
 mforge hook guardrails
+mforge hook emit --event <name>
 `), true
 	default:
 		return "", false

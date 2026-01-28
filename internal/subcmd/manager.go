@@ -1,6 +1,7 @@
 package subcmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,13 +38,17 @@ func Manager(home string, args []string) error {
 		return fmt.Errorf("unknown manager subcommand: %s", op)
 	}
 	watch := false
+	stopIdle := false
 	for i := 1; i < len(rest); i++ {
 		if rest[i] == "--watch" {
 			watch = true
 		}
+		if rest[i] == "--stop-idle" {
+			stopIdle = true
+		}
 	}
 	for {
-		summary, err := reconcile(home, rigName)
+		summary, err := reconcile(home, rigName, stopIdle)
 		if err != nil {
 			return err
 		}
@@ -63,7 +68,7 @@ func Manager(home string, args []string) error {
 	}
 }
 
-func reconcile(home, rigName string) (reconcileSummary, error) {
+func reconcile(home, rigName string, stopIdle bool) (reconcileSummary, error) {
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
 		return reconcileSummary{}, err
@@ -109,6 +114,7 @@ func reconcile(home, rigName string) (reconcileSummary, error) {
 			meta.Kind = "assignment_complete"
 			meta.Title = issue.Title
 			emitOrchestrationEvent(cfg.RepoPath, meta, fmt.Sprintf("Assignment complete %s", issue.ID), []string{"related:" + issue.ID})
+			writeTaskCompleteSignal(meta, issue)
 		}
 	}
 	unblocked, err := reconcileBlockedTasks(client, issues, cfg.RepoPath)
@@ -116,7 +122,7 @@ func reconcile(home, rigName string) (reconcileSummary, error) {
 		return summary, err
 	}
 	summary.TasksUnblocked = unblocked
-	health, err := reconcileAgentHealth(home, cfg, rigName, issues)
+	health, err := reconcileAgentHealth(home, cfg, rigName, issues, stopIdle)
 	if err != nil {
 		return summary, err
 	}
@@ -136,13 +142,45 @@ func archiveMail(worktree, rel string) {
 	_ = os.Rename(src, dst)
 }
 
+func writeTaskCompleteSignal(meta beads.Meta, issue beads.Issue) {
+	if strings.TrimSpace(meta.Worktree) == "" {
+		return
+	}
+	signalDir := filepath.Join(meta.Worktree, "mail", "signals")
+	if err := os.MkdirAll(signalDir, 0o755); err != nil {
+		return
+	}
+	taskID := ""
+	for _, dep := range issue.Deps {
+		if strings.HasPrefix(dep, "related:") {
+			taskID = strings.TrimPrefix(dep, "related:")
+			break
+		}
+	}
+	payload := map[string]string{
+		"type":         "task_complete",
+		"task_id":      taskID,
+		"assignment":   issue.ID,
+		"cell":         meta.Cell,
+		"role":         meta.Role,
+		"completed_at": time.Now().UTC().Format(time.RFC3339),
+		"notify":       meta.Notify,
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return
+	}
+	name := "task-complete-" + issue.ID + ".json"
+	_ = util.AtomicWriteFile(filepath.Join(signalDir, name), b, 0o644)
+}
+
 type agentHealthSummary struct {
 	Stale int
 	Idle  int
 	Down  int
 }
 
-func reconcileAgentHealth(home string, cfg rig.RigConfig, rigName string, issues []beads.Issue) (agentHealthSummary, error) {
+func reconcileAgentHealth(home string, cfg rig.RigConfig, rigName string, issues []beads.Issue, stopIdle bool) (agentHealthSummary, error) {
 	const staleThreshold = 15 * time.Minute
 	const idleThreshold = 5 * time.Minute
 	cells, err := rig.ListCellConfigs(home, rigName)
@@ -205,6 +243,11 @@ func reconcileAgentHealth(home string, cfg rig.RigConfig, rigName string, issues
 						eventGate[meta.Kind+"|"+cell.Name+"|"+role] = true
 					}
 					summary.Idle++
+					if stopIdle {
+						_, _ = runTmux(cfg, false, false, "kill-session", "-t", session)
+						meta.Kind = "agent_idle_exit"
+						emitOrchestrationEvent(cfg.RepoPath, meta, fmt.Sprintf("Agent idle exit %s/%s", cell.Name, role), nil)
+					}
 				}
 				continue
 			}
@@ -320,6 +363,12 @@ func assignmentHasCommit(worktree string, issue beads.Issue) (bool, error) {
 	}
 	if strings.Contains(msg, strings.ToLower(issue.ID)) {
 		return true, nil
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(issue.Title)), "assignment ") {
+		taskID := strings.TrimSpace(strings.TrimPrefix(issue.Title, "Assignment "))
+		if taskID != "" && strings.Contains(msg, strings.ToLower(taskID)) {
+			return true, nil
+		}
 	}
 	for _, dep := range issue.Deps {
 		if strings.HasPrefix(dep, "related:") {

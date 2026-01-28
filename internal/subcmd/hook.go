@@ -14,7 +14,7 @@ import (
 
 func Hook(home string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: mforge hook <stop|guardrails> ...")
+		return fmt.Errorf("usage: mforge hook <stop|guardrails|emit> ...")
 	}
 	op := args[0]
 	rest := args[1:]
@@ -54,6 +54,30 @@ func Hook(home string, args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(dec)
+
+	case "emit":
+		if len(rest) < 2 {
+			return fmt.Errorf("usage: mforge hook emit --event <name>")
+		}
+		event := ""
+		for i := 0; i < len(rest); i++ {
+			if rest[i] == "--event" && i+1 < len(rest) {
+				event = rest[i+1]
+				i++
+			}
+		}
+		if strings.TrimSpace(event) == "" {
+			return fmt.Errorf("--event is required")
+		}
+		identity, err := hooks.LoadIdentityFromCWD(cwd)
+		if err != nil {
+			return err
+		}
+		payload := map[string]any{}
+		if len(inBytes) > 0 {
+			_ = json.Unmarshal(inBytes, &payload)
+		}
+		return hooks.DispatchHook(event, payload, identity)
 
 	default:
 		return fmt.Errorf("unknown hook subcommand: %s", op)

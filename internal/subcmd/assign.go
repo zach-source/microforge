@@ -17,6 +17,7 @@ func Assign(home string, args []string) error {
 	rigName := args[0]
 	var taskID, cellName, role, promise string
 	promise = "DONE"
+	quick := false
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--task":
@@ -39,6 +40,8 @@ func Assign(home string, args []string) error {
 				promise = args[i+1]
 				i++
 			}
+		case "--quick":
+			quick = true
 		}
 	}
 	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(cellName) == "" || strings.TrimSpace(role) == "" {
@@ -68,11 +71,22 @@ func Assign(home string, args []string) error {
 		if issue.Status == "closed" || issue.Status == "done" {
 			continue
 		}
+		meta := beads.ParseMeta(issue.Description)
+		if meta.Cell != "" && !strings.EqualFold(meta.Cell, cellName) {
+			continue
+		}
+		if meta.Role != "" && !strings.EqualFold(meta.Role, role) {
+			continue
+		}
 		for _, dep := range issue.Deps {
 			if dep == "related:"+taskID {
 				fmt.Printf("Assignment already exists for task %s\n", taskID)
 				return nil
 			}
+		}
+		if strings.Contains(issue.Title, taskID) {
+			fmt.Printf("Assignment already exists for task %s\n", taskID)
+			return nil
 		}
 	}
 
@@ -126,6 +140,9 @@ func Assign(home string, args []string) error {
 		Kind:      "assignment_created",
 		MailboxID: "",
 	}, fmt.Sprintf("Assignment %s created", assn.ID), []string{"related:" + taskID})
-	fmt.Printf("Assigned task %s -> %s/%s\n", taskID, cellName, role)
+	fmt.Printf("Assigned task %s -> %s/%s (assignment %s)\n", taskID, cellName, role, assn.ID)
+	if quick {
+		_ = Agent(home, []string{"wake", rigName, cellName, role})
+	}
 	return nil
 }

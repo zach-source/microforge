@@ -33,19 +33,25 @@ func writeAssignmentInbox(worktree, inboxRel, outboxRel, promise string, issue b
 	if body == "" {
 		body = "_(no additional body provided)_"
 	}
-	mail := fmt.Sprintf(`---
-task_id: %s
-kind: %s
-out_file: %s
-completion_promise: %s
----
+	metaLines := []string{
+		"---",
+		"task_id: " + issue.ID,
+		"kind: " + issue.Type,
+		"out_file: " + outboxRel,
+		"completion_promise: " + promise,
+	}
+	if len(issue.Deps) > 0 {
+		metaLines = append(metaLines, "depends_on: "+strings.Join(issue.Deps, ","))
+	}
+	metaLines = append(metaLines, "---")
+	mail := strings.Join(metaLines, "\n") + fmt.Sprintf(`
 
 # Goal
 %s
 
 # Details
 %s
-`, issue.ID, issue.Type, outboxRel, promise, issue.Title, body)
+`, issue.Title, body)
 	inboxAbs := filepath.Join(worktree, inboxRel)
 	if err := util.EnsureDir(filepath.Dir(inboxAbs)); err != nil {
 		return mail, err

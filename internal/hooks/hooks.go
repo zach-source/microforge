@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/example/microforge/internal/beads"
 	"github.com/example/microforge/internal/rig"
@@ -76,6 +77,10 @@ func StopHook(ctx context.Context, client beads.Client, identity AgentIdentity) 
 			continue
 		}
 		m := beads.ParseMeta(issue.Description)
+		claimID := fmt.Sprintf("%s/%s", identity.CellName, identity.Role)
+		if strings.TrimSpace(m.ClaimedBy) != "" && !strings.EqualFold(m.ClaimedBy, claimID) {
+			continue
+		}
 		if m.Cell != "" && m.Cell != identity.CellName {
 			continue
 		}
@@ -93,6 +98,11 @@ func StopHook(ctx context.Context, client beads.Client, identity AgentIdentity) 
 		UpdateHeartbeat(identity, "idle", "", turnID, "")
 		updateHookIdle(ctx, client, identity, turnID)
 		emitHookIdleEvent(ctx, client, identity, turnID)
+		emitAgentStatusEvent(ctx, client, identity, turnID, "idle", "")
+		if ralphLoopEnabled() {
+			reason := "IDLE: No assignments found. Check mail/inbox for new tasks. If none, wait 60s and check again. Do not ask the user."
+			return StopHookResponse{Continue: true, Reason: reason}, nil
+		}
 		return StopHookResponse{Continue: false}, nil
 	}
 	_, _ = client.UpdateStatus(ctx, chosen.ID, "in_progress")
@@ -109,14 +119,27 @@ func StopHook(ctx context.Context, client beads.Client, identity AgentIdentity) 
 	if strings.TrimSpace(promise) == "" {
 		promise = "DONE:" + chosen.ID
 	}
+	meta.Inbox = inboxRel
+	meta.Outbox = outboxRel
+	meta.Promise = promise
+	if strings.TrimSpace(meta.DependsOn) == "" && len(chosen.Deps) > 0 {
+		meta.DependsOn = strings.Join(chosen.Deps, ",")
+	}
+	if strings.TrimSpace(meta.ClaimedBy) == "" {
+		meta.ClaimedBy = fmt.Sprintf("%s/%s", identity.CellName, identity.Role)
+	}
+	if strings.TrimSpace(meta.ClaimedAt) == "" {
+		meta.ClaimedAt = time.Now().UTC().Format(time.RFC3339)
+	}
 
 	body := strings.TrimSpace(beads.StripMeta(chosen.Description))
 	inboxAbs := filepath.Join(identity.Worktree, inboxRel)
-	mail := renderMail(identity, chosen.ID, chosen.Type, chosen.Title, body, outboxRel, promise)
+	mail := renderMail(identity, chosen.ID, chosen.Type, chosen.Title, body, outboxRel, promise, meta.DependsOn, meta.ClaimedBy, meta.ClaimedAt)
 	if err := util.AtomicWriteFile(inboxAbs, []byte(mail), 0o644); err != nil {
 		return StopHookResponse{}, err
 	}
 
+	updateAssignmentClaim(ctx, client, chosen, meta, body)
 	updateHookBead(ctx, client, identity, chosen, meta, mail)
 	emitHookEvent(ctx, client, identity, chosen, meta)
 
@@ -127,10 +150,55 @@ func StopHook(ctx context.Context, client beads.Client, identity AgentIdentity) 
 	}
 
 	UpdateHeartbeat(identity, "claimed", chosen.ID, turnID, "")
+	emitAgentStatusEvent(ctx, client, identity, turnID, "claimed", chosen.ID)
 	return StopHookResponse{
 		Continue: true,
 		Reason:   reason + "\n\n=== BEGIN ASSIGNMENT ===\n" + mail + "\n=== END ASSIGNMENT ===",
 	}, nil
+}
+
+func emitAgentStatusEvent(ctx context.Context, client beads.Client, identity AgentIdentity, turnID, status, assignmentID string) {
+	descMeta := beads.Meta{
+		Cell:    identity.CellName,
+		Role:    identity.Role,
+		Scope:   identity.Scope,
+		TurnID:  turnID,
+		Kind:    "agent_status",
+		AgentID: identity.AgentID,
+		HookID:  identity.HookID,
+	}
+	body := fmt.Sprintf("status=%s\nassignment_id=%s", status, assignmentID)
+	desc := beads.RenderMeta(descMeta) + "\n\n" + body
+	_, _ = client.Create(ctx, beads.CreateRequest{
+		Title:       fmt.Sprintf("Agent status %s/%s", identity.CellName, identity.Role),
+		Type:        "event",
+		Priority:    "p3",
+		Status:      "open",
+		Description: desc,
+	})
+}
+
+func updateAssignmentClaim(ctx context.Context, client beads.Client, issue beads.Issue, meta beads.Meta, body string) {
+	if strings.TrimSpace(issue.ID) == "" {
+		return
+	}
+	desc := beads.RenderMeta(meta)
+	if strings.TrimSpace(body) != "" {
+		desc += "\n\n" + strings.TrimSpace(body)
+	}
+	if _, err := client.UpdateDescription(ctx, issue.ID, desc); err != nil {
+		if err == beads.ErrUpdateDescriptionUnsupported {
+			return
+		}
+	}
+}
+
+func ralphLoopEnabled() bool {
+	val := strings.TrimSpace(os.Getenv("MF_RALPH_LOOP"))
+	if val == "" {
+		return true
+	}
+	return strings.EqualFold(val, "1") || strings.EqualFold(val, "true") || strings.EqualFold(val, "yes")
 }
 
 func shouldResetContext() bool {
@@ -253,7 +321,7 @@ func currentTurnID(identity AgentIdentity) string {
 	return strings.TrimSpace(state.ID)
 }
 
-func renderMail(id AgentIdentity, taskID, kind, title, body, outRel, promise string) string {
+func renderMail(id AgentIdentity, taskID, kind, title, body, outRel, promise, deps, claimedBy, claimedAt string) string {
 	b := strings.TrimSpace(body)
 	if b == "" {
 		b = "_(no additional body provided)_"
@@ -266,6 +334,9 @@ role: %s
 scope: %s
 out_file: %s
 completion_promise: %s
+claimed_by: %s
+claimed_at: %s
+depends_on: %s
 ---
 
 # Goal
@@ -283,7 +354,8 @@ completion_promise: %s
 - Builder writes code; Reviewer/Monitor do not write code.
 - Run tests relevant to this scope.
 - If blocked by missing info, write assumptions in the outbox report.
-`, taskID, kind, id.Role, scope, outRel, promise, title, b, scope, outRel, promise)
+- After completion, immediately check mail/inbox for the next task and continue without asking.
+`, taskID, kind, id.Role, scope, outRel, promise, claimedBy, claimedAt, deps, title, b, scope, outRel, promise)
 }
 
 func GuardrailsHook(in ClaudeHookInput, identity AgentIdentity) (DecisionResponse, error) {

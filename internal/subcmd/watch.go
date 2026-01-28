@@ -17,12 +17,13 @@ import (
 
 func Watch(home string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: mforge watch <rig> [--interval <seconds>] [--role <role>] [--fswatch]")
+		return fmt.Errorf("usage: mforge watch <rig> [--interval <seconds>] [--role <role>] [--fswatch] [--tui]")
 	}
 	rigName := args[0]
 	interval := 60
 	role := ""
 	useFSWatch := false
+	useTUI := false
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--interval":
@@ -39,10 +40,19 @@ func Watch(home string, args []string) error {
 			}
 		case "--fswatch":
 			useFSWatch = true
+		case "--tui":
+			useTUI = true
 		}
 	}
 	if interval < 5 {
 		interval = 5
+	}
+	if useTUI {
+		tuiArgs := []string{rigName, "--interval", strconv.Itoa(interval), "--watch"}
+		if strings.TrimSpace(role) != "" {
+			tuiArgs = append(tuiArgs, "--role", role)
+		}
+		return TUI(home, tuiArgs)
 	}
 	if useFSWatch {
 		return watchFS(home, rigName, role, time.Duration(interval)*time.Second)
@@ -74,6 +84,8 @@ func watchOnce(home, rigName, role string) error {
 			if !roleExists(cell.WorktreePath, r) {
 				continue
 			}
+			session := fmt.Sprintf("%s-%s-%s-%s", cfg.TmuxPrefix, rigName, cell.Name, r)
+			_ = maybeAcceptTrustPrompt(home, rigName, cell.Name, r, session, cfg)
 			inbox := filepath.Join(cell.WorktreePath, "mail", "inbox")
 			pending := inboxCount(inbox)
 			if pending == 0 {
@@ -82,13 +94,12 @@ func watchOnce(home, rigName, role string) error {
 			if !shouldNudge(home, rigName, cell.Name, r) {
 				continue
 			}
-			session := fmt.Sprintf("%s-%s-%s-%s", cfg.TmuxPrefix, rigName, cell.Name, r)
 			if _, err := runTmux(cfg, false, false, "has-session", "-t", session); err != nil {
 				continue
 			}
 			prompt := fmt.Sprintf("New tasks detected (%d). Check mail/inbox and start the first task.", pending)
 			_ = touchNudge(home, rigName, cell.Name, r)
-			if _, err := runTmux(cfg, false, false, "send-keys", "-t", session, prompt, "Enter"); err != nil {
+			if err := sendWakePrompt(cfg, false, session, prompt); err != nil {
 				return err
 			}
 		}
@@ -172,6 +183,38 @@ func inboxCount(path string) int {
 	return count
 }
 
+func maybeAcceptTrustPrompt(home, rigName, cellName, role, session string, cfg rig.RigConfig) bool {
+	if strings.TrimSpace(os.Getenv("MF_AUTO_TRUST")) == "0" {
+		return false
+	}
+	if _, err := runTmux(cfg, false, false, "has-session", "-t", session); err != nil {
+		return false
+	}
+	logPath := filepath.Join(agentObsDir(home, rigName, cellName, role), "agent.log")
+	lines, err := readLastLinesLocal(logPath, 30)
+	if err != nil {
+		return false
+	}
+	if !trustPromptDetected(lines) {
+		return false
+	}
+	if time.Since(readTrustNudge(home, rigName, cellName, role)) < 2*time.Minute {
+		return false
+	}
+	_ = touchTrustNudge(home, rigName, cellName, role)
+	_, _ = runTmux(cfg, false, false, "send-keys", "-t", session, "Enter")
+	return true
+}
+
+func trustPromptDetected(lines []string) bool {
+	for _, line := range lines {
+		if strings.Contains(line, "Do you trust the files in this folder?") {
+			return true
+		}
+	}
+	return false
+}
+
 func shouldNudge(home, rigName, cellName, role string) bool {
 	last := readNudge(home, rigName, cellName, role)
 	if time.Since(last) < 5*time.Minute {
@@ -210,4 +253,54 @@ func touchNudge(home, rigName, cellName, role string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
+}
+
+func trustNudgePath(home, rigName, cellName, role string) string {
+	return filepath.Join(home, "rigs", rigName, "agents", cellName, role, "last_trust_nudge")
+}
+
+func readTrustNudge(home, rigName, cellName, role string) time.Time {
+	path := trustNudgePath(home, rigName, cellName, role)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}
+	}
+	ts, err := time.Parse(time.RFC3339, strings.TrimSpace(string(b)))
+	if err != nil {
+		return time.Time{}
+	}
+	return ts
+}
+
+func touchTrustNudge(home, rigName, cellName, role string) error {
+	path := trustNudgePath(home, rigName, cellName, role)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644)
+}
+
+func readLastLinesLocal(path string, limit int) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 1024*1024)
+	lines := make([]string, 0, limit)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(lines) < limit {
+			lines = append(lines, line)
+			continue
+		}
+		copy(lines, lines[1:])
+		lines[len(lines)-1] = line
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return lines, nil
 }

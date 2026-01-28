@@ -3,7 +3,6 @@ package subcmd
 import (
 	"bufio"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,10 +21,16 @@ import (
 
 func Agent(home string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: mforge agent <spawn|stop|attach|wake|relaunch|status|logs|heartbeat|create|bootstrap> ...")
+		return fmt.Errorf("usage: mforge agent <spawn|stop|attach|wake|relaunch|send|status|logs|heartbeat|create|bootstrap> ...")
 	}
 	op := args[0]
 	rest := args[1:]
+	if op == "exit" {
+		op = "stop"
+	}
+	if op == "restart" {
+		op = "relaunch"
+	}
 	if op == "create" {
 		if len(rest) < 2 {
 			return fmt.Errorf("usage: mforge agent create <path> --description <text> [--class crew|worker]")
@@ -55,6 +60,12 @@ func Agent(home string, args []string) error {
 			return fmt.Errorf("usage: mforge agent heartbeat <cell> <role>")
 		}
 		return agentHeartbeat(home, rest)
+	}
+	if op == "send" {
+		if len(rest) < 3 {
+			return fmt.Errorf("usage: mforge agent send <cell> <role> <message> [--no-enter]")
+		}
+		return agentSend(home, rest)
 	}
 	if len(rest) < 3 {
 		return fmt.Errorf("usage: mforge agent %s <cell> <role>", op)
@@ -153,7 +164,7 @@ func Agent(home string, args []string) error {
 		writeHeartbeat(home, rigName, cellName, role, "woke", "", "")
 
 		prompt := "Check mail/inbox/ for assignment .md files. Read the first one, work it, and write your report to the outbox file listed. If none, respond 'IDLE'."
-		if _, err := runTmux(cfg, remote, false, "send-keys", "-t", session, prompt, "Enter"); err != nil {
+		if err := sendWakePrompt(cfg, remote, session, prompt); err != nil {
 			return err
 		}
 		emitOrchestrationEvent(cfg.RepoPath, beads.Meta{
@@ -199,7 +210,7 @@ func Agent(home string, args []string) error {
 		writeHeartbeat(home, rigName, cellName, role, "spawned", "", "")
 		maybeAcceptTrust(cfg, remote, session)
 
-		if _, err := runTmux(cfg, remote, false, "send-keys", "-t", session, "Check mail/inbox/ for assignment .md files. Read the first one, work it, and write your report to the outbox file listed. If none, respond 'IDLE'.", "Enter"); err != nil {
+		if err := sendWakePrompt(cfg, remote, session, "Check mail/inbox/ for assignment .md files. Read the first one, work it, and write your report to the outbox file listed. If none, respond 'IDLE'."); err != nil {
 			return err
 		}
 		writeHeartbeat(home, rigName, cellName, role, "woke", "", "")
@@ -215,6 +226,35 @@ func Agent(home string, args []string) error {
 	default:
 		return fmt.Errorf("unknown agent subcommand: %s", op)
 	}
+}
+
+func agentSend(home string, args []string) error {
+	rigName, cellName, role := args[0], args[1], args[2]
+	if len(args) < 4 {
+		return fmt.Errorf("usage: mforge agent send <cell> <role> <message> [--no-enter]")
+	}
+	message := args[3]
+	noEnter := false
+	for i := 4; i < len(args); i++ {
+		if args[i] == "--no-enter" {
+			noEnter = true
+		}
+	}
+	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
+	if err != nil {
+		return err
+	}
+	session := fmt.Sprintf("%s-%s-%s-%s", cfg.TmuxPrefix, rigName, cellName, role)
+	if _, err := runTmux(cfg, false, false, "has-session", "-t", session); err != nil {
+		return fmt.Errorf("tmux session not running: %s", session)
+	}
+	target := tmuxPaneTarget(session)
+	if noEnter {
+		_, err := runTmux(cfg, false, false, "send-keys", "-t", target, message)
+		return err
+	}
+	_, err = runTmux(cfg, false, false, "send-keys", "-t", target, message, "Enter")
+	return err
 }
 
 func setActiveAgent(worktree, role string) error {
@@ -677,16 +717,36 @@ func ensureSessionID(cfg rig.RigConfig, cmd string, args []string) []string {
 	if !strings.EqualFold(cfg.RuntimeProvider, "claude") && !strings.Contains(strings.ToLower(cmd), "claude") {
 		return args
 	}
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--session-id" && i+1 < len(args) {
-			return args
+	out := append([]string{}, args...)
+	for i := 0; i < len(out); i++ {
+		if out[i] == "--session-id" && i+1 < len(out) {
+			if isUUID(out[i+1]) {
+				return out
+			}
+			out[i+1] = randomUUID()
+			return out
 		}
 	}
-	id := randomID(16)
+	id := randomUUID()
 	if strings.TrimSpace(id) == "" {
-		return args
+		return out
 	}
-	return append(args, "--session-id", id)
+	out = append(out, "--session-id", id)
+	if hasArg(out, "--resume") || hasArg(out, "--continue") {
+		if !hasArg(out, "--fork-session") {
+			out = append(out, "--fork-session")
+		}
+	}
+	return out
+}
+
+func hasArg(args []string, needle string) bool {
+	for _, arg := range args {
+		if arg == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureDangerousSkip(cfg rig.RigConfig, cmd string, args []string) []string {
@@ -701,15 +761,46 @@ func ensureDangerousSkip(cfg rig.RigConfig, cmd string, args []string) []string 
 	return append(args, "--dangerously-skip-permissions")
 }
 
-func randomID(n int) string {
-	if n <= 0 {
-		n = 16
+func sendWakePrompt(cfg rig.RigConfig, remote bool, session, prompt string) error {
+	target := tmuxPaneTarget(session)
+	if _, err := runTmux(cfg, remote, false, "send-keys", "-t", target, prompt, "Enter"); err != nil {
+		return err
 	}
-	b := make([]byte, n)
+	time.Sleep(150 * time.Millisecond)
+	if _, err := runTmux(cfg, remote, false, "send-keys", "-t", target, "Enter"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func randomUUID() string {
+	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return ""
 	}
-	return strings.ToLower(hex.EncodeToString(b))
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4],
+		b[4:6],
+		b[6:8],
+		b[8:10],
+		b[10:16],
+	)
+}
+
+func isUUID(val string) bool {
+	parts := strings.Split(val, "-")
+	if len(parts) != 5 {
+		return false
+	}
+	lengths := []int{8, 4, 4, 4, 12}
+	for i, p := range parts {
+		if len(p) != lengths[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveRemoteWorkdir(cfg rig.RigConfig, localWorktree, cellName string) string {
@@ -729,6 +820,13 @@ func runTmux(cfg rig.RigConfig, remote bool, tty bool, args ...string) (util.Cmd
 		return util.Run(nil, cmd, sshArgs...)
 	}
 	return util.Run(nil, "tmux", args...)
+}
+
+func tmuxPaneTarget(session string) string {
+	if strings.Contains(session, ":") {
+		return session
+	}
+	return session
 }
 
 func agentObsDir(home, rigName, cellName, role string) string {

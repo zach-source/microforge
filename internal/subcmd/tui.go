@@ -2,6 +2,7 @@ package subcmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -24,6 +25,8 @@ type agentRow struct {
 	LastSeen   string
 	Heartbeat  string
 	Assignment string
+	Inbox      string
+	LastLog    string
 }
 
 type roundStats struct {
@@ -54,6 +57,8 @@ type tuiModel struct {
 	logErr     string
 	logUpdated time.Time
 	followAll  bool
+	watchMode  bool
+	watchRole  string
 }
 
 type dataMsg struct {
@@ -70,11 +75,16 @@ type logMsg struct {
 	err   error
 	when  time.Time
 }
+type watchMsg struct {
+	err error
+}
 
 func TUI(home string, args []string) error {
 	interval := 2 * time.Second
 	remote := false
 	rigName := ""
+	watchMode := false
+	watchRole := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--interval":
@@ -86,6 +96,13 @@ func TUI(home string, args []string) error {
 			}
 		case "--remote":
 			remote = true
+		case "--watch":
+			watchMode = true
+		case "--role":
+			if i+1 < len(args) {
+				watchRole = args[i+1]
+				i++
+			}
 		default:
 			if !strings.HasPrefix(args[i], "-") && rigName == "" {
 				rigName = args[i]
@@ -96,12 +113,14 @@ func TUI(home string, args []string) error {
 		return fmt.Errorf("usage: mforge tui [--interval <seconds>] [--remote]")
 	}
 	model := tuiModel{
-		home:     home,
-		rigName:  rigName,
-		remote:   remote,
-		interval: interval,
-		tab:      0,
-		selected: 0,
+		home:      home,
+		rigName:   rigName,
+		remote:    remote,
+		interval:  interval,
+		tab:       0,
+		selected:  0,
+		watchMode: watchMode,
+		watchRole: watchRole,
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
@@ -109,7 +128,11 @@ func TUI(home string, args []string) error {
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(loadDataCmd(m.home, m.rigName, m.remote), tickCmd(m.interval), loadLogsCmd(m.home, m.rigName, nil))
+	cmds := []tea.Cmd{loadDataCmd(m.home, m.rigName, m.remote), tickCmd(m.interval), loadLogsCmd(m.home, m.rigName, nil)}
+	if m.watchMode {
+		cmds = append(cmds, watchCmd(m.home, m.rigName, m.watchRole))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -160,7 +183,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 	case tickMsg:
-		return m, tea.Batch(loadDataCmd(m.home, m.rigName, m.remote), loadLogsCmd(m.home, m.rigName, m), tickCmd(m.interval))
+		cmds := []tea.Cmd{loadDataCmd(m.home, m.rigName, m.remote), loadLogsCmd(m.home, m.rigName, m), tickCmd(m.interval)}
+		if m.watchMode {
+			cmds = append(cmds, watchCmd(m.home, m.rigName, m.watchRole))
+		}
+		return m, tea.Batch(cmds...)
 	case dataMsg:
 		if msg.err != nil {
 			m.lastErr = msg.err.Error()
@@ -184,8 +211,20 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logUpdated = msg.when
 		}
 		return m, nil
+	case watchMsg:
+		if msg.err != nil {
+			m.lastErr = msg.err.Error()
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+func watchCmd(home, rigName, role string) tea.Cmd {
+	return func() tea.Msg {
+		err := watchOnce(home, rigName, role)
+		return watchMsg{err: err}
+	}
 }
 
 func (m tuiModel) View() string {
@@ -244,7 +283,7 @@ func renderAgents(rows []agentRow) string {
 	if len(rows) == 0 {
 		return "No agents found."
 	}
-	headers := []string{"cell", "role", "state", "session", "last_seen", "heartbeat", "assignment"}
+	headers := []string{"cell", "role", "state", "session", "last_seen", "heartbeat", "assignment", "inbox", "last_log"}
 	table := [][]string{headers}
 	for _, row := range rows {
 		table = append(table, []string{
@@ -255,6 +294,8 @@ func renderAgents(rows []agentRow) string {
 			row.LastSeen,
 			row.Heartbeat,
 			row.Assignment,
+			row.Inbox,
+			row.LastLog,
 		})
 	}
 	return renderTable(table)
@@ -436,6 +477,12 @@ func collectAgentRows(home, rigName string, cfg rig.RigConfig, cells []rig.CellC
 			if hb.AssignmentID != "" {
 				assignment = hb.AssignmentID
 			}
+			inboxCount := countInbox(filepath.Join(cell.WorktreePath, "mail", "inbox"))
+			lastLog := "-"
+			logPath := filepath.Join(agentObsDir(home, rigName, cell.Name, role), "agent.log")
+			if lines, err := readLastLines(logPath, 1); err == nil && len(lines) == 1 {
+				lastLog = sanitizeLogLine(lines[0])
+			}
 			rows = append(rows, agentRow{
 				Cell:       cell.Name,
 				Role:       role,
@@ -444,6 +491,8 @@ func collectAgentRows(home, rigName string, cfg rig.RigConfig, cells []rig.CellC
 				LastSeen:   lastSeen,
 				Heartbeat:  status,
 				Assignment: assignment,
+				Inbox:      fmt.Sprintf("%d", inboxCount),
+				LastLog:    lastLog,
 			})
 		}
 	}
@@ -454,6 +503,24 @@ func collectAgentRows(home, rigName string, cfg rig.RigConfig, cells []rig.CellC
 		return rows[i].Cell < rows[j].Cell
 	})
 	return rows
+}
+
+func countInbox(path string) int {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".md") {
+			count++
+		}
+	}
+	return count
 }
 
 func collectRoundStats(issues []beads.Issue) roundStats {

@@ -46,7 +46,7 @@ func DefaultRigConfig(name, repo string) RigConfig {
 		TmuxPrefix:      "mforge",
 		RuntimeProvider: "claude",
 		RuntimeCmd:      "claude",
-		RuntimeArgs:     []string{"--resume", "--dangerously-skip-permissions"},
+		RuntimeArgs:     []string{"--dangerously-skip-permissions"},
 		RuntimeRoles:    map[string]RuntimeSpec{},
 		RemotePort:      22,
 		LibraryAddr:     "127.0.0.1:7331",
@@ -84,7 +84,7 @@ func LoadRigConfig(path string) (RigConfig, error) {
 		cfg.RuntimeCmd = "claude"
 	}
 	if len(cfg.RuntimeArgs) == 0 {
-		cfg.RuntimeArgs = []string{"--resume", "--dangerously-skip-permissions"}
+		cfg.RuntimeArgs = []string{"--dangerously-skip-permissions"}
 	}
 	if cfg.RuntimeRoles == nil {
 		cfg.RuntimeRoles = map[string]RuntimeSpec{}

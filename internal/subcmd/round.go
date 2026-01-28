@@ -148,7 +148,7 @@ func roundStart(home, rigName string, wait bool) error {
 			return err
 		}
 	}
-	if _, err := reconcile(home, rigName); err != nil {
+	if _, err := reconcile(home, rigName, false); err != nil {
 		return err
 	}
 	emitOrchestrationEvent(cfg.RepoPath, beads.Meta{Kind: "round_start"}, fmt.Sprintf("Round start %s", rigName), nil)
@@ -257,7 +257,7 @@ func roundReview(home, rigName string, wait bool, base string, all bool, changes
 			return err
 		}
 	}
-	if _, err := reconcile(home, rigName); err != nil {
+	if _, err := reconcile(home, rigName, false); err != nil {
 		return err
 	}
 	emitOrchestrationEvent(cfg.RepoPath, beads.Meta{Kind: "round_review"}, fmt.Sprintf("Round review %s", rigName), nil)

@@ -74,20 +74,34 @@ mforge agent wake payments builder
 mforge task create --title "Add /healthz endpoint" --body "Add handler + tests" --scope services/payments
 mforge assign --task <task_id> --cell payments --role builder
 ```
+Quick assign (creates assignment + inbox + wakes):
+```bash
+mforge quick-assign <task_id> payments --role builder
+```
 
 5) Monitor progress and reconcile:
 ```bash
 mforge manager tick --watch
+mforge manager tick --stop-idle
 mforge report --cell payments
 ```
 
 Optional:
 - Start a turn + bead triage helpers:
 ```bash
-mforge turn start
+mforge turn start --name "Payments Sprint"
 mforge bead list --type request
 mforge bead triage --id <bead_id> --cell payments --role builder
 mforge turn slate
+mforge turn status
+mforge turn end --report
+mforge turn list
+mforge turn diff --id <turn_id>
+```
+- Rig migration (fix session args + hooks + settings):
+```bash
+mforge migrate rig
+mforge migrate rig --all
 ```
 - Review + PR workflow:
 ```bash
@@ -130,7 +144,7 @@ mforge coordinator sync
 4) Merge and end the turn:
 ```bash
 mforge merge run --as merge-manager
-mforge turn end
+mforge turn end --report
 ```
 
 ## Epic + Round Flow (Managers + Agents)
@@ -149,6 +163,8 @@ mforge epic tree
 
 mforge round start --wait
 mforge round review --wait
+mforge round review --all
+mforge round merge --feature auth-epic
 mforge checkpoint --message "round 1"
 ```
 
@@ -191,11 +207,27 @@ mforge agent logs payments builder --lines 200
 mforge agent logs payments builder --follow
 mforge agent heartbeat payments builder
 mforge agent status --cell payments --role builder --json
+mforge status --cell payments --role builder --json
+mforge agent send payments builder "Check mail/inbox and start the first task."
+mforge bead status <id> in_progress
+mforge migrate rig --all
 ```
 
 TUI dashboard:
 ```bash
 mforge tui --interval 2
+```
+
+Live Claude CLI e2e test:
+```bash
+make test-e2e-claude
+```
+
+Supervisor loop:
+```bash
+mforge watch --interval 60
+mforge watch --fswatch
+mforge watch --tui
 ```
 
 ## Quickstart (one microservice cell)
@@ -238,6 +270,12 @@ mforge task delete --task <task_id> --dry-run
 5) Wake the builder (if it’s idle) and let hooks drive the loop:
 ```bash
 mforge agent wake payments builder
+```
+
+Agent lifecycle shortcuts:
+```bash
+mforge agent exit payments builder
+mforge agent restart payments builder
 ```
 
 6) Reconcile completion:

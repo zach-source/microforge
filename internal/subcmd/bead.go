@@ -11,7 +11,7 @@ import (
 
 func Bead(home string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: mforge bead <create|list|show|close|triage|dep> ...")
+		return fmt.Errorf("usage: mforge bead <create|list|show|close|triage|dep|status> ...")
 	}
 	op := args[0]
 	rest := args[1:]
@@ -29,6 +29,8 @@ func Bead(home string, args []string) error {
 		return beadTriage(home, rest)
 	case "dep":
 		return beadDep(home, rest)
+	case "status":
+		return beadStatus(home, rest)
 	default:
 		return fmt.Errorf("unknown bead subcommand: %s", op)
 	}
@@ -263,6 +265,31 @@ func beadClose(home string, rest []string) error {
 	}
 	client := beads.Client{RepoPath: cfg.RepoPath}
 	_, err = client.Close(nil, id, reason)
+	return err
+}
+
+func beadStatus(home string, rest []string) error {
+	if len(rest) < 3 {
+		return fmt.Errorf("usage: mforge bead status <id> <status> [--reason <text>]")
+	}
+	rigName, id, status := rest[0], rest[1], rest[2]
+	var reason string
+	for i := 3; i < len(rest); i++ {
+		if rest[i] == "--reason" && i+1 < len(rest) {
+			reason = rest[i+1]
+			i++
+		}
+	}
+	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
+	if err != nil {
+		return err
+	}
+	client := beads.Client{RepoPath: cfg.RepoPath}
+	if strings.EqualFold(status, "done") || strings.EqualFold(status, "closed") {
+		_, err = client.Close(nil, id, reason)
+		return err
+	}
+	_, err = client.UpdateStatus(nil, id, status)
 	return err
 }
 

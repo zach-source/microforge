@@ -14,6 +14,10 @@ type Meta struct {
 	Promise    string
 	TurnID     string
 	Worktree   string
+	ClaimedBy  string
+	ClaimedAt  string
+	DependsOn  string
+	Notify     string
 	Kind       string
 	Title      string
 	ShortID    string
@@ -67,6 +71,14 @@ func ParseMeta(desc string) Meta {
 			meta.TurnID = val
 		case "worktree":
 			meta.Worktree = val
+		case "claimed_by":
+			meta.ClaimedBy = val
+		case "claimed_at":
+			meta.ClaimedAt = val
+		case "depends_on":
+			meta.DependsOn = val
+		case "notify":
+			meta.Notify = val
 		case "kind":
 			meta.Kind = val
 		case "title":
@@ -123,6 +135,18 @@ func RenderMeta(meta Meta) string {
 	}
 	if meta.Worktree != "" {
 		lines = append(lines, "worktree: "+meta.Worktree)
+	}
+	if meta.ClaimedBy != "" {
+		lines = append(lines, "claimed_by: "+meta.ClaimedBy)
+	}
+	if meta.ClaimedAt != "" {
+		lines = append(lines, "claimed_at: "+meta.ClaimedAt)
+	}
+	if meta.DependsOn != "" {
+		lines = append(lines, "depends_on: "+meta.DependsOn)
+	}
+	if meta.Notify != "" {
+		lines = append(lines, "notify: "+meta.Notify)
 	}
 	if meta.Kind != "" {
 		lines = append(lines, "kind: "+meta.Kind)

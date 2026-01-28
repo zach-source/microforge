@@ -108,6 +108,9 @@ func Cell(home string, args []string) error {
 		}
 		_ = util.EnsureDir(filepath.Join(wt, ".claude"))
 		_ = util.EnsureDir(filepath.Join(wt, ".mf"))
+		if err := ensureHookConfig(wt); err != nil {
+			return err
+		}
 		for _, p := range []string{"mail/inbox", "mail/outbox", "mail/archive"} {
 			_ = util.EnsureDir(filepath.Join(wt, p))
 		}
@@ -184,16 +187,20 @@ func Cell(home string, args []string) error {
 		for _, role := range roles {
 			stopHooks = append(stopHooks, fmt.Sprintf(`      { "hooks": [ { "type": "command", "command": "mforge hook stop --role %s" } ] }`, role))
 		}
+		for i := range stopHooks {
+			stopHooks[i] = strings.TrimSuffix(stopHooks[i], " } ] }") + ` }, { "type": "command", "command": "mforge hook emit --event claude_stop" } ] }`
+		}
 		settings := fmt.Sprintf(`{
+  "permissions": { "allow": ["Bash", "Read", "Write", "Edit"] },
   "hooks": {
     "Stop": [
 %s
     ],
     "PreToolUse": [
-      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "mforge hook guardrails" } ] }
+      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "mforge hook guardrails" }, { "type": "command", "command": "mforge hook emit --event claude_pre_tool" } ] }
     ],
     "PermissionRequest": [
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "mforge hook guardrails" } ] }
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "mforge hook guardrails" }, { "type": "command", "command": "mforge hook emit --event claude_permission" } ] }
     ]
   }
 }`, strings.Join(stopHooks, ",\n"))
@@ -368,4 +375,22 @@ func defaultRoleGuide(role string) string {
 	default:
 		return ""
 	}
+}
+
+func ensureHookConfig(worktree string) error {
+	path := filepath.Join(worktree, ".mf", "hooks.json")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	config := `{
+  "events": {
+    "claude_stop": [],
+    "claude_pre_tool": [],
+    "claude_permission": [],
+    "turn_start": [],
+    "turn_end": [],
+    "turn_report": []
+  }
+}`
+	return util.AtomicWriteFile(path, []byte(config+"\n"), 0o644)
 }

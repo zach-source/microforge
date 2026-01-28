@@ -314,12 +314,12 @@ _mforge_complete() {
   sub="${COMP_WORDS[2]}"
 
   if [ $COMP_CWORD -eq 1 ]; then
-    _mforge_complete_from_list "$cur" init cell agent task request monitor epic manager turn round checkpoint bead review pr merge wait coordinator digest build deploy contract architect report library scope engine convoy watch tui migrate context rig ssh completions hook help
+    _mforge_complete_from_list "$cur" init cell agent task request monitor epic manager turn round checkpoint bead review pr merge wait coordinator digest build deploy contract architect report library scope engine convoy watch quick-assign tui migrate context rig ssh completions hook help
     return
   fi
 
   if [ "$cmd" = "help" ]; then
-    _mforge_complete_from_list "$cur" init cell agent task request monitor epic manager turn round checkpoint bead review pr merge wait coordinator digest build deploy contract architect report library scope engine convoy watch tui migrate context rig ssh completions hook
+    _mforge_complete_from_list "$cur" init cell agent task request monitor epic manager turn round checkpoint bead review pr merge wait coordinator digest build deploy contract architect report library scope engine convoy watch quick-assign tui migrate context rig ssh completions hook
     return
   fi
 
@@ -373,7 +373,11 @@ _mforge_complete() {
       ;;
     agent)
       if [ $COMP_CWORD -eq 2 ]; then
-        _mforge_complete_from_list "$cur" spawn stop attach wake relaunch status logs heartbeat create bootstrap
+        _mforge_complete_from_list "$cur" spawn stop attach wake relaunch send status logs heartbeat create bootstrap
+        return
+      fi
+      if [ "$sub" = "send" ]; then
+        _mforge_complete_from_list "$cur" --no-enter
         return
       fi
       if [ "$sub" = "create" ]; then
@@ -554,7 +558,23 @@ _mforge_complete() {
           return
           ;;
       esac
-      _mforge_complete_from_list "$cur" --task --cell --role --promise
+      _mforge_complete_from_list "$cur" --task --cell --role --promise --quick
+      return
+      ;;
+    quick-assign)
+      if [ $COMP_CWORD -eq 2 ]; then
+        _mforge_complete_from_list "$cur" $(_mforge_bead_ids "")
+        return
+      fi
+      if [ $COMP_CWORD -eq 3 ]; then
+        _mforge_complete_from_list "$cur" $(_mforge_cells)
+        return
+      fi
+      if [ "$prev" = "--role" ]; then
+        _mforge_complete_from_list "$cur" builder monitor reviewer architect cell
+        return
+      fi
+      _mforge_complete_from_list "$cur" --role --promise
       return
       ;;
     request)
@@ -897,16 +917,16 @@ _mforge_complete() {
       esac
       ;;
     watch)
-      _mforge_complete_from_list "$cur" --interval --role --fswatch
+      _mforge_complete_from_list "$cur" --interval --role --fswatch --tui
       return
       ;;
     tui)
-      _mforge_complete_from_list "$cur" --interval --remote
+      _mforge_complete_from_list "$cur" --interval --remote --watch --role
       return
       ;;
     migrate)
       if [ $COMP_CWORD -eq 2 ]; then
-        _mforge_complete_from_list "$cur" beads
+        _mforge_complete_from_list "$cur" beads rig
         return
       fi
       _mforge_complete_from_list "$cur" --all
@@ -942,7 +962,19 @@ _mforge_complete() {
       ;;
     turn)
       if [ $COMP_CWORD -eq 2 ]; then
-        _mforge_complete_from_list "$cur" start status end slate run
+        _mforge_complete_from_list "$cur" start status end slate run list diff
+        return
+      fi
+      if [ "$sub" = "start" ]; then
+        _mforge_complete_from_list "$cur" --name
+        return
+      fi
+      if [ "$sub" = "end" ]; then
+        _mforge_complete_from_list "$cur" --report
+        return
+      fi
+      if [ "$sub" = "diff" ]; then
+        _mforge_complete_from_list "$cur" --id
         return
       fi
       if [ "$sub" = "run" ]; then
@@ -997,7 +1029,7 @@ _mforge_complete() {
       ;;
     bead)
       if [ $COMP_CWORD -eq 2 ]; then
-        _mforge_complete_from_list "$cur" create list show close triage dep template
+        _mforge_complete_from_list "$cur" create list show close status triage dep template
         return
       fi
       if [ "$sub" = "dep" ]; then
@@ -1054,9 +1086,15 @@ _mforge_complete() {
           return
           ;;
       esac
-      if [ "$sub" = "show" ] || [ "$sub" = "close" ]; then
+      if [ "$sub" = "show" ] || [ "$sub" = "close" ] || [ "$sub" = "status" ]; then
         if [ $COMP_CWORD -eq 3 ]; then
           _mforge_complete_from_list "$cur" $(_mforge_bead_ids "")
+          return
+        fi
+      fi
+      if [ "$sub" = "status" ]; then
+        if [ $COMP_CWORD -eq 4 ]; then
+          _mforge_complete_from_list "$cur" open in_progress blocked done closed ready queued
           return
         fi
       fi
@@ -1239,7 +1277,11 @@ _mforge_complete() {
       ;;
     hook)
       if [ $COMP_CWORD -eq 2 ]; then
-        _mforge_complete_from_list "$cur" stop guardrails
+        _mforge_complete_from_list "$cur" stop guardrails emit
+        return
+      fi
+      if [ "$sub" = "emit" ]; then
+        _mforge_complete_from_list "$cur" --event
         return
       fi
       return
