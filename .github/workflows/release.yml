@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
+            -o mforge-${{ matrix.suffix }} ./cmd/mforge
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mforge-${{ matrix.suffix }}
+          path: mforge-${{ matrix.suffix }}
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/*/; do
+            cp "$dir"/* release/
+          done
+          cd release
+          # Create checksums
+          sha256sum * > checksums.txt
+          # Create tarballs
+          for f in mforge-*; do
+            if [[ "$f" != *.txt ]]; then
+              chmod +x "$f"
+              tar -czvf "${f}.tar.gz" "$f"
+              rm "$f"
+            fi
+          done
+          # Update checksums for tarballs
+          sha256sum *.tar.gz > checksums.txt
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Microforge ${{ steps.version.outputs.VERSION }}
+          body: |
+            ## Microforge ${{ steps.version.outputs.VERSION }}
+
+            Go CLI that orchestrates Claude Code agents as a multi-role system for managing microservices in a monorepo.
+
+            ### Installation
+
+            **Homebrew:**
+            ```bash
+            brew tap zach-source/tap
+            brew install mforge
+            ```
+
+            **Nix:**
+            ```bash
+            nix profile install github:zach-source/nix-packages#mforge
+            ```
+
+            **Manual:**
+            Download the appropriate binary for your platform below.
+
+            ### Checksums
+            See `checksums.txt` for SHA256 checksums of all release assets.
+          files: |
+            release/*.tar.gz
+            release/checksums.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-packages:
+    name: Update Package Repositories
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download checksums
+        run: |
+          curl -sL "https://github.com/zach-source/microforge/releases/download/v${{ steps.version.outputs.VERSION }}/checksums.txt" -o checksums.txt
+          cat checksums.txt
+
+      - name: Extract SHA256 hashes
+        id: hashes
+        run: |
+          echo "DARWIN_ARM64=$(grep 'darwin-arm64.tar.gz' checksums.txt | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "DARWIN_AMD64=$(grep 'darwin-amd64.tar.gz' checksums.txt | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "LINUX_ARM64=$(grep 'linux-arm64.tar.gz' checksums.txt | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "LINUX_AMD64=$(grep 'linux-amd64.tar.gz' checksums.txt | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Trigger Homebrew tap update
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.PACKAGES_TOKEN }}
+          repository: zach-source/homebrew-tap
+          event-type: mforge-release
+          client-payload: |
+            {
+              "version": "${{ steps.version.outputs.VERSION }}",
+              "darwin_arm64_sha256": "${{ steps.hashes.outputs.DARWIN_ARM64 }}",
+              "darwin_amd64_sha256": "${{ steps.hashes.outputs.DARWIN_AMD64 }}",
+              "linux_arm64_sha256": "${{ steps.hashes.outputs.LINUX_ARM64 }}",
+              "linux_amd64_sha256": "${{ steps.hashes.outputs.LINUX_AMD64 }}"
+            }
+
+      - name: Trigger nix-packages update
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.PACKAGES_TOKEN }}
+          repository: zach-source/nix-packages
+          event-type: mforge-release
+          client-payload: |
+            {
+              "version": "${{ steps.version.outputs.VERSION }}",
+              "darwin_arm64_sha256": "${{ steps.hashes.outputs.DARWIN_ARM64 }}",
+              "darwin_amd64_sha256": "${{ steps.hashes.outputs.DARWIN_AMD64 }}",
+              "linux_arm64_sha256": "${{ steps.hashes.outputs.LINUX_ARM64 }}",
+              "linux_amd64_sha256": "${{ steps.hashes.outputs.LINUX_AMD64 }}"
+            }
