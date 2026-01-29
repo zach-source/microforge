@@ -52,7 +52,7 @@ func Task(home string, args []string) error {
 		}
 		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading rig %s: %w", rigName, err)
 		}
 		client := beads.Client{RepoPath: cfg.RepoPath}
 		meta := beads.Meta{Scope: scope, Kind: kind, Title: title}
@@ -68,7 +68,7 @@ func Task(home string, args []string) error {
 			Description: desc,
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("creating task: %w", err)
 		}
 		fmt.Printf("Created task %s\n", issue.ID)
 		return nil
@@ -98,12 +98,12 @@ func Task(home string, args []string) error {
 		}
 		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading rig %s: %w", rigName, err)
 		}
 		client := beads.Client{RepoPath: cfg.RepoPath}
 		issue, err := client.Show(nil, taskID)
 		if err != nil {
-			return err
+			return fmt.Errorf("showing task %s: %w", taskID, err)
 		}
 		if strings.ToLower(issue.Type) != "task" {
 			return fmt.Errorf("bead %s is not a task (type=%s)", issue.ID, issue.Type)
@@ -123,7 +123,7 @@ func Task(home string, args []string) error {
 			return nil
 		}
 		if !errors.Is(err, beads.ErrUpdateDescriptionUnsupported) {
-			return err
+			return fmt.Errorf("updating task %s description: %w", taskID, err)
 		}
 		deps := append([]string{}, issue.Deps...)
 		if !hasDepPrefix(deps, "related:"+issue.ID) {
@@ -138,7 +138,7 @@ func Task(home string, args []string) error {
 			Deps:        deps,
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("creating replacement task: %w", err)
 		}
 		_, _ = client.Close(nil, issue.ID, "superseded by "+replacement.ID)
 		fmt.Printf("Updated task %s -> %s\n", issue.ID, replacement.ID)
@@ -151,12 +151,12 @@ func Task(home string, args []string) error {
 		rigName := rest[0]
 		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading rig %s: %w", rigName, err)
 		}
 		client := beads.Client{RepoPath: cfg.RepoPath}
 		tasks, err := client.List(nil)
 		if err != nil {
-			return err
+			return fmt.Errorf("listing tasks: %w", err)
 		}
 		activeAssignments := map[string]bool{}
 		for _, issue := range tasks {
@@ -215,12 +215,12 @@ func Task(home string, args []string) error {
 		}
 		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading rig %s: %w", rigName, err)
 		}
 		client := beads.Client{RepoPath: cfg.RepoPath}
 		parent, err := client.Show(nil, taskID)
 		if err != nil {
-			return err
+			return fmt.Errorf("showing parent task %s: %w", taskID, err)
 		}
 		parentMeta := beads.ParseMeta(parent.Description)
 		cells := strings.Split(cellsCSV, ",")
@@ -231,7 +231,7 @@ func Task(home string, args []string) error {
 			}
 			cellCfg, err := rig.LoadCellConfig(rig.CellConfigPath(home, rigName, cellName))
 			if err != nil {
-				return err
+				return fmt.Errorf("loading cell %s: %w", cellName, err)
 			}
 			title := fmt.Sprintf("Split: %s (%s)", parent.Title, cellName)
 			body := fmt.Sprintf("Parent task: %s\n\n%s", parent.ID, beads.StripMeta(parent.Description))
@@ -247,7 +247,7 @@ func Task(home string, args []string) error {
 				Deps:        []string{"related:" + parent.ID},
 			})
 			if err != nil {
-				return err
+				return fmt.Errorf("creating split task for %s: %w", cellName, err)
 			}
 			fmt.Printf("Created child task %s for %s\n", child.ID, cellName)
 		}
@@ -286,12 +286,12 @@ func Task(home string, args []string) error {
 		}
 		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading rig %s: %w", rigName, err)
 		}
 		client := beads.Client{RepoPath: cfg.RepoPath}
 		issue, err := client.Show(nil, taskID)
 		if err != nil {
-			return err
+			return fmt.Errorf("showing task %s: %w", taskID, err)
 		}
 		if strings.ToLower(issue.Type) != "task" {
 			return fmt.Errorf("bead %s is not a task (type=%s)", issue.ID, issue.Type)
@@ -310,7 +310,7 @@ func Task(home string, args []string) error {
 				Description: desc,
 				Deps:        []string{"related:" + issue.ID},
 			}); err != nil {
-				return err
+				return fmt.Errorf("creating decomposed task %q: %w", title, err)
 			}
 			created++
 		}
@@ -345,12 +345,12 @@ func Task(home string, args []string) error {
 		}
 		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading rig %s: %w", rigName, err)
 		}
 		client := beads.Client{RepoPath: cfg.RepoPath}
 		issue, err := client.Show(nil, taskID)
 		if err != nil {
-			return err
+			return fmt.Errorf("showing task %s: %w", taskID, err)
 		}
 		if strings.ToLower(issue.Type) != "task" {
 			return fmt.Errorf("bead %s is not a task (type=%s)", issue.ID, issue.Type)
@@ -360,7 +360,7 @@ func Task(home string, args []string) error {
 			Reason: reason,
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("completing task %s: %w", taskID, err)
 		}
 		meta := beads.ParseMeta(issue.Description)
 		meta.Kind = "task_complete"
@@ -409,12 +409,12 @@ func Task(home string, args []string) error {
 		}
 		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading rig %s: %w", rigName, err)
 		}
 		client := beads.Client{RepoPath: cfg.RepoPath}
 		issue, err := client.Show(nil, taskID)
 		if err != nil {
-			return err
+			return fmt.Errorf("showing task %s: %w", taskID, err)
 		}
 		if strings.ToLower(issue.Type) != "task" {
 			return fmt.Errorf("bead %s is not a task (type=%s)", issue.ID, issue.Type)
@@ -427,7 +427,7 @@ func Task(home string, args []string) error {
 			Reason:  reason,
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("deleting task %s: %w", taskID, err)
 		}
 		if strings.TrimSpace(out) != "" {
 			fmt.Print(out)

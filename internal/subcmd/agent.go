@@ -80,11 +80,11 @@ func Agent(home string, args []string) error {
 
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading rig %s: %w", rigName, err)
 	}
 	cellCfg, err := rig.LoadCellConfig(rig.CellConfigPath(home, rigName, cellName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading cell %s: %w", cellName, err)
 	}
 	session := fmt.Sprintf("%s-%s-%s-%s", cfg.TmuxPrefix, rigName, cellName, role)
 	worktree := cellCfg.WorktreePath
@@ -242,7 +242,7 @@ func agentSend(home string, args []string) error {
 	}
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading rig %s: %w", rigName, err)
 	}
 	session := fmt.Sprintf("%s-%s-%s-%s", cfg.TmuxPrefix, rigName, cellName, role)
 	if _, err := runTmux(cfg, false, false, "has-session", "-t", session); err != nil {
@@ -261,15 +261,18 @@ func setActiveAgent(worktree, role string) error {
 	idPath := filepath.Join(worktree, ".mf", "active-agent-"+role+".json")
 	b, err := os.ReadFile(idPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading agent identity %s: %w", idPath, err)
 	}
-	return util.AtomicWriteFile(filepath.Join(worktree, ".mf", "active-agent.json"), b, 0o644)
+	if err := util.AtomicWriteFile(filepath.Join(worktree, ".mf", "active-agent.json"), b, 0o644); err != nil {
+		return fmt.Errorf("writing active-agent.json: %w", err)
+	}
+	return nil
 }
 
 func ensureCellBootstrapped(home, rigName, cellName, role string, auto bool) error {
 	cellCfg, err := rig.LoadCellConfig(rig.CellConfigPath(home, rigName, cellName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading cell config %s: %w", cellName, err)
 	}
 	rolePath := filepath.Join(cellCfg.WorktreePath, ".mf", "active-agent-"+role+".json")
 	settingsPath := rig.CellClaudeSettingsPath(home, rigName, cellName)
@@ -575,11 +578,11 @@ func loadAgentSpec(repoRoot, name string) (AgentSpec, error) {
 	path := filepath.Join(repoRoot, ".mf", "agents", name+".json")
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return AgentSpec{}, err
+		return AgentSpec{}, fmt.Errorf("reading agent spec %s: %w", path, err)
 	}
 	var spec AgentSpec
 	if err := json.Unmarshal(b, &spec); err != nil {
-		return AgentSpec{}, err
+		return AgentSpec{}, fmt.Errorf("parsing agent spec %s: %w", path, err)
 	}
 	if strings.TrimSpace(spec.Name) == "" {
 		spec.Name = name
@@ -692,7 +695,7 @@ func agentHeartbeat(home string, args []string) error {
 	path := filepath.Join(agentObsDir(home, rigName, cellName, role), "heartbeat.json")
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading heartbeat %s: %w", path, err)
 	}
 	fmt.Println(string(b))
 	return nil
@@ -886,7 +889,7 @@ func writeHeartbeat(home, rigName, cellName, role, status, assignmentID, message
 func readLastLines(path string, limit int) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)

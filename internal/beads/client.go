@@ -1,3 +1,5 @@
+// Package beads provides a client wrapper for the bd (Beads) CLI issue tracker.
+// Beads is the task/request/observation tracking system used by Microforge agents.
 package beads
 
 import (
@@ -10,10 +12,13 @@ import (
 	"github.com/example/microforge/internal/util"
 )
 
+// Client wraps the bd CLI for issue operations. RepoPath is the directory
+// where bd commands are executed (typically the monorepo root).
 type Client struct {
 	RepoPath string
 }
 
+// DeleteOptions controls the behavior of the Delete operation.
 type DeleteOptions struct {
 	Force   bool
 	Hard    bool
@@ -22,11 +27,13 @@ type DeleteOptions struct {
 	Reason  string
 }
 
+// CloseOptions controls the behavior of the Close operation.
 type CloseOptions struct {
 	Force  bool
 	Reason string
 }
 
+// Issue represents a bead (task, assignment, event, etc.) in the tracker.
 type Issue struct {
 	ID          string
 	Title       string
@@ -38,6 +45,7 @@ type Issue struct {
 	CreatedAt   string
 }
 
+// CreateRequest contains fields for creating a new bead.
 type CreateRequest struct {
 	Title       string
 	Type        string
@@ -47,13 +55,19 @@ type CreateRequest struct {
 	Deps        []string
 }
 
+// ErrUpdateDescriptionUnsupported is returned when the bd CLI doesn't support --description flag.
 var ErrUpdateDescriptionUnsupported = errors.New("bd update does not support --description")
 
+// Init initializes the beads store in the repository.
 func (c Client) Init(ctx context.Context) error {
 	_, err := util.RunInDir(ctx, c.RepoPath, "bd", "init")
-	return err
+	if err != nil {
+		return fmt.Errorf("bd init: %w", err)
+	}
+	return nil
 }
 
+// Create creates a new bead with the given parameters.
 func (c Client) Create(ctx context.Context, req CreateRequest) (Issue, error) {
 	if strings.TrimSpace(req.Title) == "" {
 		return Issue{}, fmt.Errorf("title is required")
@@ -77,22 +91,23 @@ func (c Client) Create(ctx context.Context, req CreateRequest) (Issue, error) {
 	args = append(args, req.Title)
 	res, err := util.RunInDir(ctx, c.RepoPath, "bd", args...)
 	if err != nil {
-		return Issue{}, err
+		return Issue{}, fmt.Errorf("bd create: %w", err)
 	}
 	issue, err := parseIssue(res.Stdout)
 	if err != nil {
-		return Issue{}, err
+		return Issue{}, fmt.Errorf("parsing bd create response: %w", err)
 	}
 	if strings.TrimSpace(req.Status) != "" {
 		updated, err := c.UpdateStatus(ctx, issue.ID, req.Status)
 		if err != nil {
-			return Issue{}, err
+			return Issue{}, fmt.Errorf("setting status on %s: %w", issue.ID, err)
 		}
 		return updated, nil
 	}
 	return issue, nil
 }
 
+// UpdateStatus changes the status of an existing bead.
 func (c Client) UpdateStatus(ctx context.Context, id, status string) (Issue, error) {
 	if strings.TrimSpace(id) == "" {
 		return Issue{}, fmt.Errorf("id is required")
@@ -103,11 +118,17 @@ func (c Client) UpdateStatus(ctx context.Context, id, status string) (Issue, err
 	}
 	res, err := util.RunInDir(ctx, c.RepoPath, "bd", args...)
 	if err != nil {
-		return Issue{}, err
+		return Issue{}, fmt.Errorf("bd update %s: %w", id, err)
 	}
-	return parseIssue(res.Stdout)
+	issue, err := parseIssue(res.Stdout)
+	if err != nil {
+		return Issue{}, fmt.Errorf("parsing bd update response: %w", err)
+	}
+	return issue, nil
 }
 
+// UpdateDescription updates the description of an existing bead.
+// Returns ErrUpdateDescriptionUnsupported if the bd CLI doesn't support this operation.
 func (c Client) UpdateDescription(ctx context.Context, id, description string) (Issue, error) {
 	if strings.TrimSpace(id) == "" {
 		return Issue{}, fmt.Errorf("id is required")
@@ -121,15 +142,21 @@ func (c Client) UpdateDescription(ctx context.Context, id, description string) (
 		if strings.Contains(err.Error(), "unknown flag") && strings.Contains(err.Error(), "--description") {
 			return Issue{}, ErrUpdateDescriptionUnsupported
 		}
-		return Issue{}, err
+		return Issue{}, fmt.Errorf("bd update %s description: %w", id, err)
 	}
-	return parseIssue(res.Stdout)
+	issue, err := parseIssue(res.Stdout)
+	if err != nil {
+		return Issue{}, fmt.Errorf("parsing bd update response: %w", err)
+	}
+	return issue, nil
 }
 
+// Close closes a bead with an optional reason.
 func (c Client) Close(ctx context.Context, id, reason string) (Issue, error) {
 	return c.CloseWithOptions(ctx, id, CloseOptions{Reason: reason})
 }
 
+// CloseWithOptions closes a bead with configurable options.
 func (c Client) CloseWithOptions(ctx context.Context, id string, opts CloseOptions) (Issue, error) {
 	if strings.TrimSpace(id) == "" {
 		return Issue{}, fmt.Errorf("id is required")
@@ -143,46 +170,70 @@ func (c Client) CloseWithOptions(ctx context.Context, id string, opts CloseOptio
 	}
 	res, err := util.RunInDir(ctx, c.RepoPath, "bd", args...)
 	if err != nil {
-		return Issue{}, err
+		return Issue{}, fmt.Errorf("bd close %s: %w", id, err)
 	}
-	return parseIssue(res.Stdout)
+	issue, err := parseIssue(res.Stdout)
+	if err != nil {
+		return Issue{}, fmt.Errorf("parsing bd close response: %w", err)
+	}
+	return issue, nil
 }
 
+// Show retrieves a single bead by ID.
 func (c Client) Show(ctx context.Context, id string) (Issue, error) {
 	if strings.TrimSpace(id) == "" {
 		return Issue{}, fmt.Errorf("id is required")
 	}
 	res, err := util.RunInDir(ctx, c.RepoPath, "bd", "show", id, "--json")
 	if err != nil {
-		return Issue{}, err
+		return Issue{}, fmt.Errorf("bd show %s: %w", id, err)
 	}
-	return parseIssue(res.Stdout)
+	issue, err := parseIssue(res.Stdout)
+	if err != nil {
+		return Issue{}, fmt.Errorf("parsing bd show response: %w", err)
+	}
+	return issue, nil
 }
 
+// List returns all beads in the repository.
 func (c Client) List(ctx context.Context) ([]Issue, error) {
 	res, err := util.RunInDir(ctx, c.RepoPath, "bd", "list", "--json")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("bd list: %w", err)
 	}
-	return parseIssues(res.Stdout)
+	issues, err := parseIssues(res.Stdout)
+	if err != nil {
+		return nil, fmt.Errorf("parsing bd list response: %w", err)
+	}
+	return issues, nil
 }
 
+// Ready returns beads that are ready to be worked on (no blocking dependencies).
 func (c Client) Ready(ctx context.Context) ([]Issue, error) {
 	res, err := util.RunInDir(ctx, c.RepoPath, "bd", "ready", "--json")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("bd ready: %w", err)
 	}
-	return parseIssues(res.Stdout)
+	issues, err := parseIssues(res.Stdout)
+	if err != nil {
+		return nil, fmt.Errorf("parsing bd ready response: %w", err)
+	}
+	return issues, nil
 }
 
+// DepAdd adds a dependency relationship between beads.
 func (c Client) DepAdd(ctx context.Context, id string, dep string) error {
 	if strings.TrimSpace(id) == "" || strings.TrimSpace(dep) == "" {
 		return fmt.Errorf("id and dep required")
 	}
 	_, err := util.RunInDir(ctx, c.RepoPath, "bd", "dep", "add", id, dep)
-	return err
+	if err != nil {
+		return fmt.Errorf("bd dep add %s %s: %w", id, dep, err)
+	}
+	return nil
 }
 
+// Delete removes beads with the given IDs. Use DryRun to preview the operation.
 func (c Client) Delete(ctx context.Context, ids []string, opts DeleteOptions) (string, error) {
 	if len(ids) == 0 {
 		return "", fmt.Errorf("id is required")
@@ -214,7 +265,7 @@ func (c Client) Delete(ctx context.Context, ids []string, opts DeleteOptions) (s
 	}
 	res, err := util.RunInDir(ctx, c.RepoPath, "bd", args...)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("bd delete: %w", err)
 	}
 	return res.Stdout, nil
 }
@@ -222,7 +273,7 @@ func (c Client) Delete(ctx context.Context, ids []string, opts DeleteOptions) (s
 func parseIssue(raw string) (Issue, error) {
 	issues, err := parseIssues(raw)
 	if err != nil {
-		return Issue{}, err
+		return Issue{}, fmt.Errorf("parsing issue: %w", err)
 	}
 	if len(issues) == 1 {
 		return issues[0], nil
@@ -240,7 +291,7 @@ func parseIssues(raw string) ([]Issue, error) {
 	}
 	var anyVal any
 	if err := json.Unmarshal([]byte(trim), &anyVal); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid json: %w", err)
 	}
 	switch v := anyVal.(type) {
 	case []any:

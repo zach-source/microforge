@@ -1,3 +1,6 @@
+// Package hooks provides Claude Code hook handlers for the Microforge agent system.
+// It handles stop hooks (assignment claiming), guardrails (permission validation),
+// and agent identity management.
 package hooks
 
 import (
@@ -15,6 +18,7 @@ import (
 	"github.com/example/microforge/internal/util"
 )
 
+// ClaudeHookInput represents the JSON input from Claude Code hooks.
 type ClaudeHookInput struct {
 	HookEventName string `json:"hook_event_name"`
 	Cwd           string `json:"cwd"`
@@ -22,16 +26,21 @@ type ClaudeHookInput struct {
 	ToolInput     any    `json:"tool_input,omitempty"`
 }
 
+// StopHookResponse is returned by the stop hook to control agent continuation.
 type StopHookResponse struct {
 	Continue bool   `json:"continue"`
 	Reason   string `json:"reason,omitempty"`
 }
 
+// DecisionResponse is returned by guardrails hooks to allow or deny tool usage.
 type DecisionResponse struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason,omitempty"`
 }
 
+// AgentIdentity contains the identity and context for an agent within a cell.
+// It is stored in .mf/active-agent.json and used by hooks to determine
+// agent role, scope, and mail paths.
 type AgentIdentity struct {
 	RigName     string `json:"rig_name"`
 	RigHome     string `json:"rig_home"`
@@ -51,6 +60,9 @@ type AgentIdentity struct {
 	Class       string `json:"class,omitempty"`
 }
 
+// LoadIdentityFromCWD loads the agent identity from .mf/active-agent.json
+// in the given working directory. Returns an error if the file is missing
+// or malformed.
 func LoadIdentityFromCWD(cwd string) (AgentIdentity, error) {
 	p := filepath.Join(cwd, ".mf", "active-agent.json")
 	b, err := os.ReadFile(p)
@@ -64,6 +76,10 @@ func LoadIdentityFromCWD(cwd string) (AgentIdentity, error) {
 	return id, nil
 }
 
+// StopHook is the main stop hook handler. It checks for ready assignments,
+// claims one if available, writes it to the agent's inbox, and returns
+// instructions for the agent to continue. If no assignments are found,
+// returns Continue=false (or Continue=true with IDLE message if ralph loop is enabled).
 func StopHook(ctx context.Context, client beads.Client, identity AgentIdentity) (StopHookResponse, error) {
 	ready, err := client.Ready(ctx)
 	if err != nil {
@@ -358,6 +374,9 @@ depends_on: %s
 `, taskID, kind, id.Role, scope, outRel, promise, claimedBy, claimedAt, deps, title, b, scope, outRel, promise)
 }
 
+// GuardrailsHook validates tool usage against agent role and scope restrictions.
+// Read-only roles (reviewer, monitor, architect) are denied Write/Edit/Bash.
+// All roles are denied writes outside their configured scope prefix.
 func GuardrailsHook(in ClaudeHookInput, identity AgentIdentity) (DecisionResponse, error) {
 	tool := strings.TrimSpace(in.ToolName)
 	if tool == "Write" || tool == "Edit" {
@@ -454,7 +473,7 @@ func pathWithinScope(identity AgentIdentity, fp string) bool {
 	}
 	baseAbs, err := filepath.Abs(base)
 	if err != nil {
-		return true
+		return false // fail-closed: deny on path resolution error
 	}
 
 	target := fp
@@ -463,12 +482,12 @@ func pathWithinScope(identity AgentIdentity, fp string) bool {
 	}
 	targetAbs, err := filepath.Abs(target)
 	if err != nil {
-		return true
+		return false // fail-closed: deny on path resolution error
 	}
 
 	rel, err := filepath.Rel(baseAbs, targetAbs)
 	if err != nil {
-		return true
+		return false // fail-closed: deny on path resolution error
 	}
 	if rel == "." {
 		return true

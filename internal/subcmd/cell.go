@@ -45,10 +45,10 @@ func Cell(home string, args []string) error {
 			CreatedAt:    time.Now().UTC().Format(time.RFC3339),
 		}
 		if err := util.EnsureDir(rig.CellDir(home, rigName, cellName)); err != nil {
-			return err
+			return fmt.Errorf("creating cell directory: %w", err)
 		}
 		if err := rig.SaveCellConfig(rig.CellConfigPath(home, rigName, cellName), cellCfg); err != nil {
-			return err
+			return fmt.Errorf("saving cell config: %w", err)
 		}
 		fmt.Printf("Created cell %q (scope=%q)\n", cellName, scope)
 		fmt.Printf("Worktree path: %s\n", worktree)
@@ -71,11 +71,11 @@ func Cell(home string, args []string) error {
 		}
 		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading rig %s: %w", rigName, err)
 		}
 		cellCfg, err := rig.LoadCellConfig(rig.CellConfigPath(home, rigName, cellName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading cell %s: %w", cellName, err)
 		}
 
 		wt := cellCfg.WorktreePath
@@ -91,7 +91,7 @@ func Cell(home string, args []string) error {
 				}
 			} else {
 				if err := util.EnsureDir(wt); err != nil {
-					return err
+					return fmt.Errorf("creating worktree dir: %w", err)
 				}
 			}
 		} else if repoHasGit {
@@ -109,7 +109,7 @@ func Cell(home string, args []string) error {
 		_ = util.EnsureDir(filepath.Join(wt, ".claude"))
 		_ = util.EnsureDir(filepath.Join(wt, ".mf"))
 		if err := ensureHookConfig(wt); err != nil {
-			return err
+			return fmt.Errorf("creating hook config: %w", err)
 		}
 		for _, p := range []string{"mail/inbox", "mail/outbox", "mail/archive"} {
 			_ = util.EnsureDir(filepath.Join(wt, p))
@@ -140,17 +140,17 @@ func Cell(home string, args []string) error {
 			guide := readRoleGuide(wt, role)
 			roleIssue, updated, err := ensureRoleBead(issues, client, cellName, role, cellCfg.ScopePrefix, guide)
 			if err != nil {
-				return err
+				return fmt.Errorf("creating role bead for %s: %w", role, err)
 			}
 			issues = updated
 			mailIssue, updated, err := ensureMailboxBead(issues, client, cellName, role, "mail/inbox", "mail/outbox", wt)
 			if err != nil {
-				return err
+				return fmt.Errorf("creating mailbox bead for %s: %w", role, err)
 			}
 			issues = updated
 			hookIssue, updated, err := ensureHookBead(issues, client, cellName, role, cellCfg.ScopePrefix)
 			if err != nil {
-				return err
+				return fmt.Errorf("creating hook bead for %s: %w", role, err)
 			}
 			issues = updated
 
@@ -176,10 +176,10 @@ func Cell(home string, args []string) error {
 			metaDir := rig.CellMetaDir(home, rigName, cellName)
 			_ = util.EnsureDir(metaDir)
 			if err := util.AtomicWriteFile(rig.CellRoleMetaPath(home, rigName, cellName, role), b, 0o644); err != nil {
-				return err
+				return fmt.Errorf("writing role meta for %s: %w", role, err)
 			}
 			if err := util.AtomicWriteFile(filepath.Join(wt, ".mf", "active-agent-"+role+".json"), b, 0o644); err != nil {
-				return err
+				return fmt.Errorf("writing active-agent file for %s: %w", role, err)
 			}
 		}
 
@@ -205,7 +205,7 @@ func Cell(home string, args []string) error {
   }
 }`, strings.Join(stopHooks, ",\n"))
 		if err := util.AtomicWriteFile(rig.CellClaudeSettingsPath(home, rigName, cellName), []byte(settings+"\n"), 0o644); err != nil {
-			return err
+			return fmt.Errorf("writing Claude settings: %w", err)
 		}
 
 		defaultRole := "builder"
@@ -248,11 +248,11 @@ func Cell(home string, args []string) error {
 		}
 		cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading rig %s: %w", rigName, err)
 		}
 		cellCfg, err := rig.LoadCellConfig(rig.CellConfigPath(home, rigName, cellName))
 		if err != nil {
-			return err
+			return fmt.Errorf("loading cell %s: %w", cellName, err)
 		}
 		tmuxSession := fmt.Sprintf("%s-%s-%s-%s", cfg.TmuxPrefix, rigName, cellName, role)
 		identity := map[string]any{
@@ -272,10 +272,10 @@ func Cell(home string, args []string) error {
 		metaDir := rig.CellMetaDir(home, rigName, cellName)
 		_ = util.EnsureDir(metaDir)
 		if err := util.AtomicWriteFile(rig.CellRoleMetaPath(home, rigName, cellName, role), b, 0o644); err != nil {
-			return err
+			return fmt.Errorf("writing role meta for %s: %w", role, err)
 		}
 		if err := util.AtomicWriteFile(filepath.Join(cellCfg.WorktreePath, ".mf", "active-agent-"+role+".json"), b, 0o644); err != nil {
-			return err
+			return fmt.Errorf("writing active-agent file for %s: %w", role, err)
 		}
 		fmt.Printf("Wrote agent file for %s/%s (%s)\n", cellName, role, rig.CellRoleMetaPath(home, rigName, cellName, role))
 		return nil

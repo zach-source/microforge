@@ -1,3 +1,6 @@
+// Package rig provides configuration types and utilities for Microforge rigs and cells.
+// A rig is a workspace pointing to a monorepo, and a cell is a unit for one microservice
+// scope with its own git worktree.
 package rig
 
 import (
@@ -7,6 +10,8 @@ import (
 	"time"
 )
 
+// RigConfig represents the configuration for a Microforge rig, stored in rig.json.
+// It defines the monorepo path, tmux naming, runtime provider, and remote execution settings.
 type RigConfig struct {
 	Name                 string                 `json:"name"`
 	RepoPath             string                 `json:"repo_path"`
@@ -27,11 +32,14 @@ type RigConfig struct {
 	CreatedAt            string                 `json:"created_at"`
 }
 
+// RuntimeSpec defines the command and arguments for a specific role's runtime.
 type RuntimeSpec struct {
 	Cmd  string   `json:"cmd"`
 	Args []string `json:"args"`
 }
 
+// CellConfig represents the configuration for a cell within a rig, stored in cell.json.
+// It defines the cell name, scope prefix for path restrictions, and worktree location.
 type CellConfig struct {
 	Name         string `json:"name"`
 	ScopePrefix  string `json:"scope_prefix"`
@@ -39,6 +47,7 @@ type CellConfig struct {
 	CreatedAt    string `json:"created_at"`
 }
 
+// DefaultRigConfig returns a RigConfig with sensible defaults for local Claude execution.
 func DefaultRigConfig(name, repo string) RigConfig {
 	return RigConfig{
 		Name:            name,
@@ -54,22 +63,28 @@ func DefaultRigConfig(name, repo string) RigConfig {
 	}
 }
 
+// SaveRigConfig writes the rig configuration to the specified path as JSON.
 func SaveRigConfig(path string, cfg RigConfig) error {
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshaling rig config: %w", err)
 	}
-	return os.WriteFile(path, b, 0o644)
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return fmt.Errorf("writing rig config %s: %w", path, err)
+	}
+	return nil
 }
 
+// LoadRigConfig reads and parses the rig configuration from the specified path.
+// It applies defaults for missing optional fields.
 func LoadRigConfig(path string) (RigConfig, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return RigConfig{}, err
+		return RigConfig{}, fmt.Errorf("reading rig config %s: %w", path, err)
 	}
 	var cfg RigConfig
 	if err := json.Unmarshal(b, &cfg); err != nil {
-		return RigConfig{}, err
+		return RigConfig{}, fmt.Errorf("parsing rig config %s: %w", path, err)
 	}
 	if cfg.Name == "" {
 		return RigConfig{}, fmt.Errorf("invalid rig.json: missing name")
@@ -98,22 +113,28 @@ func LoadRigConfig(path string) (RigConfig, error) {
 	return cfg, nil
 }
 
+// SaveCellConfig writes the cell configuration to the specified path as JSON.
 func SaveCellConfig(path string, cfg CellConfig) error {
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshaling cell config: %w", err)
 	}
-	return os.WriteFile(path, b, 0o644)
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return fmt.Errorf("writing cell config %s: %w", path, err)
+	}
+	return nil
 }
 
+// LoadCellConfig reads and parses the cell configuration from the specified path.
+// Returns an error if name or scope_prefix is missing.
 func LoadCellConfig(path string) (CellConfig, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return CellConfig{}, err
+		return CellConfig{}, fmt.Errorf("reading cell config %s: %w", path, err)
 	}
 	var cfg CellConfig
 	if err := json.Unmarshal(b, &cfg); err != nil {
-		return CellConfig{}, err
+		return CellConfig{}, fmt.Errorf("parsing cell config %s: %w", path, err)
 	}
 	if cfg.Name == "" || cfg.ScopePrefix == "" {
 		return CellConfig{}, fmt.Errorf("invalid cell.json: missing name or scope")

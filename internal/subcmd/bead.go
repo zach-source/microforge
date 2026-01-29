@@ -125,11 +125,11 @@ func beadCreate(home string, rest []string) error {
 		}
 	}
 	if err := beadLimit(home, rigName, cell, turnID); err != nil {
-		return err
+		return fmt.Errorf("checking bead limit: %w", err)
 	}
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading rig %s: %w", rigName, err)
 	}
 	client := beads.Client{RepoPath: cfg.RepoPath}
 	meta := beads.Meta{
@@ -154,7 +154,7 @@ func beadCreate(home string, rest []string) error {
 		Deps:        deps,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("creating bead: %w", err)
 	}
 	fmt.Printf("Created bead %s\n", issue.ID)
 	return nil
@@ -197,12 +197,12 @@ func beadList(home string, rest []string) error {
 	}
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading rig %s: %w", rigName, err)
 	}
 	client := beads.Client{RepoPath: cfg.RepoPath}
 	issues, err := client.List(nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("listing beads: %w", err)
 	}
 	filtered := make([]beads.Issue, 0, len(issues))
 	for _, issue := range issues {
@@ -235,12 +235,12 @@ func beadShow(home string, rest []string) error {
 	rigName, id := rest[0], rest[1]
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading rig %s: %w", rigName, err)
 	}
 	client := beads.Client{RepoPath: cfg.RepoPath}
 	issue, err := client.Show(nil, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("showing bead %s: %w", id, err)
 	}
 	fmt.Printf("%s\n%s\nstatus=%s type=%s priority=%s\n", issue.Title, issue.ID, issue.Status, issue.Type, issue.Priority)
 	fmt.Println(issue.Description)
@@ -261,11 +261,14 @@ func beadClose(home string, rest []string) error {
 	}
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading rig %s: %w", rigName, err)
 	}
 	client := beads.Client{RepoPath: cfg.RepoPath}
 	_, err = client.Close(nil, id, reason)
-	return err
+	if err != nil {
+		return fmt.Errorf("closing bead %s: %w", id, err)
+	}
+	return nil
 }
 
 func beadStatus(home string, rest []string) error {
@@ -282,15 +285,21 @@ func beadStatus(home string, rest []string) error {
 	}
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading rig %s: %w", rigName, err)
 	}
 	client := beads.Client{RepoPath: cfg.RepoPath}
 	if strings.EqualFold(status, "done") || strings.EqualFold(status, "closed") {
 		_, err = client.Close(nil, id, reason)
-		return err
+		if err != nil {
+			return fmt.Errorf("closing bead %s: %w", id, err)
+		}
+		return nil
 	}
 	_, err = client.UpdateStatus(nil, id, status)
-	return err
+	if err != nil {
+		return fmt.Errorf("updating bead %s status: %w", id, err)
+	}
+	return nil
 }
 
 func beadTriage(home string, rest []string) error {
@@ -338,20 +347,20 @@ func beadTriage(home string, rest []string) error {
 		}
 	}
 	if err := beadLimit(home, rigName, cell, turnID); err != nil {
-		return err
+		return fmt.Errorf("checking bead limit: %w", err)
 	}
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading rig %s: %w", rigName, err)
 	}
 	client := beads.Client{RepoPath: cfg.RepoPath}
 	issue, err := client.Show(nil, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("showing bead %s: %w", id, err)
 	}
 	cellCfg, err := rig.LoadCellConfig(rig.CellConfigPath(home, rigName, cell))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading cell %s: %w", cell, err)
 	}
 	inboxRel := fmt.Sprintf("mail/inbox/%s.md", issue.ID)
 	outboxRel := fmt.Sprintf("mail/outbox/%s.md", issue.ID)
@@ -375,7 +384,7 @@ func beadTriage(home string, rest []string) error {
 		Deps:        []string{"related:" + issue.ID},
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("creating assignment: %w", err)
 	}
 	mail, _ := writeAssignmentInbox(cellCfg.WorktreePath, inboxRel, outboxRel, "DONE", issue)
 	_ = createMailBead(client, meta, "Mail "+assn.ID, mail, []string{"related:" + assn.ID})
@@ -399,10 +408,13 @@ func beadDep(home string, rest []string) error {
 	id, dep := rest[2], rest[3]
 	cfg, err := rig.LoadRigConfig(rig.RigConfigPath(home, rigName))
 	if err != nil {
-		return err
+		return fmt.Errorf("loading rig %s: %w", rigName, err)
 	}
 	client := beads.Client{RepoPath: cfg.RepoPath}
-	return client.DepAdd(nil, id, dep)
+	if err := client.DepAdd(nil, id, dep); err != nil {
+		return fmt.Errorf("adding dep %s to %s: %w", dep, id, err)
+	}
+	return nil
 }
 
 func renderTemplate(beadType, desc, acceptance, compat, links string) string {
